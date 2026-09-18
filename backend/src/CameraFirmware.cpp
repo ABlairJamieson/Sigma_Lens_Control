@@ -407,9 +407,10 @@ void CameraFirmware::processByte()
 
       if (packetLength <= 0 || packetLength > MAX_BUFFER_SIZE)
       {
-        if (debugLevel >= DBG_INFO) {
-          Serial.printf("DBG: invalid packet length %d, resetting packet assembly\n", packetLength);
-        }
+        //let's ignore this-- it is confusing us
+        //if (debugLevel >= DBG_INFO) {
+        //  Serial.printf("DBG: invalid packet length %d, resetting packet assembly\n", packetLength);
+        //}
         lensToBodyBufferPosition = INVALID_POSITION;
         packetLength = 0;
         continue;
@@ -424,9 +425,10 @@ void CameraFirmware::processByte()
       }
       else
       {
-        if (debugLevel >= DBG_INFO) {
-          Serial.println("DBG: packet ended without EOM, dropping packet");
-        }
+        // do nothing
+        //if (debugLevel >= DBG_INFO) {
+        //  Serial.println("DBG: packet ended without EOM, dropping packet");
+        //}
       }
 
       lensToBodyBufferPosition = INVALID_POSITION;

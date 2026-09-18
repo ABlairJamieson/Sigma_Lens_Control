@@ -1,5 +1,5 @@
 //Assign Teensy's serial number here
-constexpr int cameraID = 0;
+constexpr int cameraID = 1;
 
 enum DebugLevel {
     DBG_NONE = 0,
