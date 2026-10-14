@@ -551,6 +551,7 @@ void DevicePanel::onLensConnectedChanged(bool connected, const QString& label)
 
 void DevicePanel::onLensTelemetryUpdated(const QMap<QString, QString>& kv)
 {
+  if (mLens->isConnected()) emit environmentReading(mSlotIndex1, lensEndpoint(), kv);
   mLastKv = kv;
   mHaveTelemetry = true;
 

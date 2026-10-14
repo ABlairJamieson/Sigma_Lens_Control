@@ -62,6 +62,7 @@ public slots:
   void requestCameraStatus();
 
 signals:
+  void environmentReading(int slot1, const QString& endpoint, const QMap<QString, QString>& values);
   void lensLedStateChanged(int slot1, DevicePanel::LedState state);
   void cameraLedStateChanged(int slot1, DevicePanel::LedState state);
 

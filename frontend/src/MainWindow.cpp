@@ -15,6 +15,7 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QDir>
+#include "EnvironmentHistory.h"
 
 
 void MainWindow::openLogFile()
@@ -76,6 +77,9 @@ MainWindow::MainWindow(QWidget *parent)
 
   
 
+  mEnvironmentHistory = new EnvironmentHistory(this);
+  ui->tabWidget_devices->addTab(mEnvironmentHistory, "Environment history");
+  connect(mEnvironmentHistory, &EnvironmentHistory::loggingError, this, [this](const QString& message) { onPanelStatusMessage(0, message); });
   initPanels();
   updateCaptureAllEnabled();
 }
@@ -109,6 +113,7 @@ void MainWindow::initPanels()
     p->setSlotIndex(i + 1);
     mPanels.push_back(p);
 
+    connect(p, &DevicePanel::environmentReading, mEnvironmentHistory, &EnvironmentHistory::record);
     connect(p, &DevicePanel::lensLedStateChanged,   this, &MainWindow::onLensLedChanged);
     connect(p, &DevicePanel::cameraLedStateChanged, this, &MainWindow::onCameraLedChanged);
     connect(p, &DevicePanel::statusMessage,         this, &MainWindow::onPanelStatusMessage);

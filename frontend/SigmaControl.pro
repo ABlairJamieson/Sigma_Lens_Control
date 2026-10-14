@@ -1,16 +1,17 @@
 
 QT += widgets serialport network
+CONFIG += c++17
 
 INCLUDEPATH += $$PWD/include
 
-HEADERS += \
+HEADERS += include/EnvironmentHistory.h \
     include/MainWindow.h \
     include/DevicePanel.h \
     include/LensClient.h \
     include/CameraClient.h \
     include/TiffWriter.h
 
-SOURCES += \
+SOURCES += src/EnvironmentHistory.cpp \
     src/SigmaControl.cpp \
     src/MainWindow.cpp \
     src/DevicePanel.cpp \

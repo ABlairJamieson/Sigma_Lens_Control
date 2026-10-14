@@ -220,3 +220,42 @@ journalctl -u asi-bridge -f
 ## Result
 
 Power on Beagley → system is ready in ~10 seconds.
+
+## Temperature and humidity history
+
+The **Environment history** tab plots BME280 temperature (°C) and relative humidity (%)
+for all eight device slots. Connect each slot's lens/Teensy bridge to receive readings;
+the ASI camera connection alone does not supply BME280 telemetry. Logging continues
+while another tab is selected, for as long as the GUI and bridge connections are open.
+
+Choose `1week`, `3days`, `1day`, `12h`, `6h`, `3h`, `1h`, or `10min`.
+Colors identify slots. Temperature scales automatically; humidity uses 0–100%.
+The time axis follows the current time. Gaps longer than 30 seconds are not joined.
+
+Valid readings are saved at most once every 10 seconds per slot and endpoint, matching
+the firmware sensor cache interval. Missing, nonnumeric, or nonfinite readings and
+humidity outside 0–100% are skipped. Daily CSV files include timestamp with timezone,
+slot, bridge endpoint, firmware camera ID (when supplied), temperature, and humidity.
+The tab displays the log directory and reports write failures. On Linux it is normally
+`~/.local/share/SigmaControl/environment/`. Files persist across GUI restarts; the
+most recent week is loaded for plotting. Older CSV files remain available for analysis.
+
+Build with Qt Widgets, Network, and SerialPort (Qt 5.15 or Qt 6), qmake, and a C++17 compiler:
+
+```bash
+mkdir -p frontend/build
+cd frontend/build
+qmake ../SigmaControl.pro
+make -j4
+./SigmaControl
+```
+
+Run the environment history tests (using simulated bridges; no hardware required):
+
+```bash
+mkdir -p frontend/build/tests
+cd frontend/build/tests
+qmake ../../tests/environment_history_test.pro
+make -j4
+QT_QPA_PLATFORM=offscreen ./environment_history_test
+```

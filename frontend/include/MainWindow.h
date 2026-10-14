@@ -14,6 +14,8 @@ namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
 
+class EnvironmentHistory;
+
 class MainWindow : public QMainWindow
 {
   Q_OBJECT
@@ -47,6 +49,7 @@ private:
 
   void updateCaptureAllEnabled();
 
+  EnvironmentHistory* mEnvironmentHistory = nullptr;
   Ui::MainWindow *ui = nullptr;
 
   QVector<DevicePanel*> mPanels; // size 8, slot1 = index+1
