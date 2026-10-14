@@ -2,6 +2,14 @@
 <ui version="4.0">
  <class>DevicePanel</class>
  <widget class="QWidget" name="DevicePanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>919</width>
+    <height>1187</height>
+   </rect>
+  </property>
   <property name="minimumSize">
    <size>
     <width>420</width>
@@ -13,9 +21,6 @@
     <layout class="QHBoxLayout" name="topBarLayout">
      <item>
       <widget class="QLabel" name="label_slotTitle">
-       <property name="text">
-        <string>Slot</string>
-       </property>
        <property name="minimumSize">
         <size>
          <width>120</width>
@@ -24,6 +29,9 @@
        </property>
        <property name="styleSheet">
         <string notr="true">font-weight:600;</string>
+       </property>
+       <property name="text">
+        <string>Slot</string>
        </property>
       </widget>
      </item>
@@ -39,7 +47,7 @@
        <property name="orientation">
         <enum>Qt::Horizontal</enum>
        </property>
-       <property name="sizeHint">
+       <property name="sizeHint" stdset="0">
         <size>
          <width>40</width>
          <height>20</height>
@@ -49,7 +57,6 @@
      </item>
     </layout>
    </item>
-
    <item>
     <widget class="QGroupBox" name="group_connection">
      <property name="title">
@@ -70,7 +77,6 @@
         </property>
        </widget>
       </item>
-
       <item row="1" column="0">
        <widget class="QLabel" name="label_lensPort">
         <property name="text">
@@ -102,7 +108,6 @@
         </property>
        </widget>
       </item>
-
       <item row="2" column="0">
        <widget class="QLabel" name="label_cameraPort">
         <property name="text">
@@ -134,7 +139,6 @@
         </property>
        </widget>
       </item>
-
       <item row="3" column="0">
        <widget class="QLabel" name="label_lensState">
         <property name="text">
@@ -163,7 +167,6 @@
         </property>
        </widget>
       </item>
-
       <item row="4" column="0">
        <widget class="QLabel" name="label_cameraState">
         <property name="text">
@@ -190,7 +193,7 @@
         <property name="orientation">
          <enum>Qt::Horizontal</enum>
         </property>
-        <property name="sizeHint">
+        <property name="sizeHint" stdset="0">
          <size>
           <width>40</width>
           <height>20</height>
@@ -201,7 +204,6 @@
      </layout>
     </widget>
    </item>
-
    <item>
     <widget class="QGroupBox" name="group_lens">
      <property name="title">
@@ -217,18 +219,17 @@
       </item>
       <item row="0" column="1" colspan="3">
        <widget class="QSlider" name="focusValueSlider">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
         <property name="minimum">
          <number>0</number>
         </property>
         <property name="maximum">
          <number>940</number>
         </property>
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
        </widget>
       </item>
-
       <item row="1" column="0">
        <widget class="QLabel" name="focusValueLabel">
         <property name="text">
@@ -257,7 +258,6 @@
         </property>
        </widget>
       </item>
-
       <item row="2" column="0">
        <widget class="QLabel" name="label_curFocus">
         <property name="text">
@@ -272,7 +272,6 @@
         </property>
        </widget>
       </item>
-
       <item row="3" column="0">
        <widget class="QLabel" name="label_aperture">
         <property name="text">
@@ -282,18 +281,17 @@
       </item>
       <item row="3" column="1" colspan="3">
        <widget class="QSlider" name="apertureValueSlider">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
         <property name="minimum">
          <number>0</number>
         </property>
         <property name="maximum">
          <number>510</number>
         </property>
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
        </widget>
       </item>
-
       <item row="4" column="0">
        <widget class="QLabel" name="apertureValueLabel">
         <property name="text">
@@ -322,7 +320,6 @@
         </property>
        </widget>
       </item>
-
       <item row="5" column="0">
        <widget class="QLabel" name="label_curAperture">
         <property name="text">
@@ -340,18 +337,30 @@
      </layout>
     </widget>
    </item>
-
    <item>
     <widget class="QGroupBox" name="group_camera">
      <property name="title">
       <string>Camera controls</string>
      </property>
      <layout class="QGridLayout" name="gridCamera">
-
-      <item row="0" column="0">
-       <widget class="QLabel" name="label_exposure">
+      <item row="2" column="3">
+       <widget class="QPushButton" name="btn_browseSaveDir">
         <property name="text">
-         <string>Exposure (ms)</string>
+         <string>Browse...</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1" colspan="3">
+       <widget class="QLabel" name="value_exposureFriendly">
+        <property name="text">
+         <string>-</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="label_exposureFriendly">
+        <property name="text">
+         <string>Exposure display</string>
         </property>
        </widget>
       </item>
@@ -365,13 +374,6 @@
         </property>
        </widget>
       </item>
-      <item row="0" column="2">
-       <widget class="QLabel" name="label_gain">
-        <property name="text">
-         <string>Gain</string>
-        </property>
-       </widget>
-      </item>
       <item row="0" column="3">
        <widget class="QSpinBox" name="spin_gain">
         <property name="maximum">
@@ -382,22 +384,23 @@
         </property>
        </widget>
       </item>
-
-      <item row="1" column="0">
-       <widget class="QLabel" name="label_exposureFriendly">
+      <item row="2" column="1" colspan="2">
+       <widget class="QLineEdit" name="edit_saveDir"/>
+      </item>
+      <item row="0" column="0">
+       <widget class="QLabel" name="label_exposure">
         <property name="text">
-         <string>Exposure display</string>
+         <string>Exposure (ms)</string>
         </property>
        </widget>
       </item>
-      <item row="1" column="1" colspan="3">
-       <widget class="QLabel" name="value_exposureFriendly">
+      <item row="0" column="2">
+       <widget class="QLabel" name="label_gain">
         <property name="text">
-         <string>-</string>
+         <string>Gain</string>
         </property>
        </widget>
       </item>
-
       <item row="2" column="0">
        <widget class="QLabel" name="label_saveDir">
         <property name="text">
@@ -405,28 +408,10 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="1" colspan="2">
-       <widget class="QLineEdit" name="edit_saveDir"/>
-      </item>
-      <item row="2" column="3">
-       <widget class="QPushButton" name="btn_browseSaveDir">
-        <property name="text">
-         <string>Browse...</string>
-        </property>
-       </widget>
-      </item>
-
       <item row="3" column="0">
        <widget class="QPushButton" name="btn_capture">
         <property name="text">
          <string>Capture</string>
-        </property>
-       </widget>
-      </item>
-      <item row="3" column="1" colspan="2">
-       <widget class="QProgressBar" name="progress_capture">
-        <property name="value">
-         <number>0</number>
         </property>
        </widget>
       </item>
@@ -437,55 +422,31 @@
         </property>
        </widget>
       </item>
-
+      <item row="3" column="1" colspan="2">
+       <widget class="QProgressBar" name="progress_capture">
+        <property name="value">
+         <number>0</number>
+        </property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>
-
    <item>
     <widget class="QGroupBox" name="group_telemetry">
      <property name="title">
       <string>Telemetry</string>
      </property>
      <layout class="QGridLayout" name="gridTelemetry">
-      <item row="0" column="0">
-       <widget class="QLabel" name="label_temp">
+      <item row="3" column="0">
+       <widget class="QLabel" name="label_accel">
         <property name="text">
-         <string>Temp (C)</string>
+         <string>Accel (Ax, Ay, Az)</string>
         </property>
        </widget>
       </item>
-      <item row="0" column="1">
-       <widget class="QLabel" name="value_temp">
-        <property name="text">
-         <string>-</string>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="2">
-       <widget class="QLabel" name="label_hum">
-        <property name="text">
-         <string>Humidity (%)</string>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="3">
-       <widget class="QLabel" name="value_humidity">
-        <property name="text">
-         <string>-</string>
-        </property>
-       </widget>
-      </item>
-
-      <item row="1" column="0">
-       <widget class="QLabel" name="label_press">
-        <property name="text">
-         <string>Pressure (hPa)</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="QLabel" name="value_pressure">
+      <item row="2" column="5">
+       <widget class="QLabel" name="value_hdg">
         <property name="text">
          <string>-</string>
         </property>
@@ -498,73 +459,13 @@
         </property>
        </widget>
       </item>
-      <item row="1" column="3">
-       <widget class="QLabel" name="value_mag">
+      <item row="0" column="0">
+       <widget class="QLabel" name="label_temp">
         <property name="text">
-         <string>-</string>
+         <string>Temp (C)</string>
         </property>
        </widget>
       </item>
-
-      <item row="2" column="0">
-       <widget class="QLabel" name="label_bmag">
-        <property name="text">
-         <string>|B|</string>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="1">
-       <widget class="QLabel" name="value_bmag">
-        <property name="text">
-         <string>-</string>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="2">
-       <widget class="QLabel" name="label_hdg">
-        <property name="text">
-         <string>Heading</string>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="3">
-       <widget class="QLabel" name="value_hdg">
-        <property name="text">
-         <string>-</string>
-        </property>
-       </widget>
-      </item>
-
-      <item row="3" column="0">
-       <widget class="QLabel" name="label_accel">
-        <property name="text">
-         <string>Accel (Ax, Ay, Az)</string>
-        </property>
-       </widget>
-      </item>
-      <item row="3" column="1" colspan="3">
-       <widget class="QLabel" name="value_accel">
-        <property name="text">
-         <string>-</string>
-        </property>
-       </widget>
-      </item>
-
-      <item row="4" column="0">
-       <widget class="QLabel" name="label_gyro">
-        <property name="text">
-         <string>Gyro (Gx, Gy, Gz)</string>
-        </property>
-       </widget>
-      </item>
-      <item row="4" column="1" colspan="3">
-       <widget class="QLabel" name="value_gyro">
-        <property name="text">
-         <string>-</string>
-        </property>
-       </widget>
-      </item>
-
       <item row="5" column="0">
        <widget class="QLabel" name="label_interval">
         <property name="text">
@@ -582,6 +483,13 @@
         </property>
        </widget>
       </item>
+      <item row="0" column="1">
+       <widget class="QLabel" name="value_temp">
+        <property name="text">
+         <string>-</string>
+        </property>
+       </widget>
+      </item>
       <item row="5" column="2">
        <widget class="QPushButton" name="btn_applyTelemetryInterval">
         <property name="text">
@@ -589,12 +497,68 @@
         </property>
        </widget>
       </item>
-      <item row="5" column="3">
+      <item row="2" column="0">
+       <widget class="QLabel" name="label_bmag">
+        <property name="text">
+         <string>|B|</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="5">
+       <widget class="QLabel" name="value_mag">
+        <property name="text">
+         <string>-</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="label_gyro">
+        <property name="text">
+         <string>Gyro (Gx, Gy, Gz)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="5">
+       <widget class="QLabel" name="value_humidity">
+        <property name="text">
+         <string>-</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="label_press">
+        <property name="text">
+         <string>Pressure (hPa)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QLabel" name="value_bmag">
+        <property name="text">
+         <string>-</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1" colspan="2">
+       <widget class="QLabel" name="value_gyro">
+        <property name="text">
+         <string>-</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="2">
+       <widget class="QLabel" name="label_hdg">
+        <property name="text">
+         <string>Heading</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="5">
        <spacer name="spacerTele">
         <property name="orientation">
          <enum>Qt::Horizontal</enum>
         </property>
-        <property name="sizeHint">
+        <property name="sizeHint" stdset="0">
          <size>
           <width>40</width>
           <height>20</height>
@@ -602,12 +566,44 @@
         </property>
        </spacer>
       </item>
-
-
+      <item row="1" column="1">
+       <widget class="QLabel" name="value_pressure">
+        <property name="text">
+         <string>-</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="3">
+       <widget class="QLabel" name="label">
+        <property name="text">
+         <string>Cam ID: </string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="2">
+       <widget class="QLabel" name="label_hum">
+        <property name="text">
+         <string>Humidity (%)</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1" colspan="2">
+       <widget class="QLabel" name="value_accel">
+        <property name="text">
+         <string>-</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="4" colspan="2">
+       <widget class="QLabel" name="value_id">
+        <property name="text">
+         <string/>
+        </property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>
-
   </layout>
  </widget>
  <resources/>

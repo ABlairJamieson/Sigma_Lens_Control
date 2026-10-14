@@ -665,7 +665,7 @@ void DevicePanel::updateTelemetryUi()
   const QString gz = getAny({"Gz", "gz"});
 
   const QString hd = getAny({"Hd", "hd", "heading"});
-
+  const QString id = getAny({"ID", "id", "iD", "Id"});
   QString bx = getAny({"Bx", "bx", "mag_x"});
   QString by = getAny({"By", "by", "mag_y"});
   QString bz = getAny({"Bz", "bz", "mag_z"});
@@ -705,6 +705,8 @@ void DevicePanel::updateTelemetryUi()
     ui->value_curAperture->setText(QString("f/%1 | 0x%2")
                                    .arg(QString::number(fNumberFromRaw(mAperture), 'f', 2))
                                    .arg(QString::number(mAperture, 16).toUpper()));
+  if (!id.isEmpty())
+    ui->value_id->setText(id);
 
   
   QStringList lines;
