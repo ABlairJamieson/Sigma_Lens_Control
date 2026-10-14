@@ -522,6 +522,7 @@ void DevicePanel::onApplyTelemetryInterval()
 // -------- LensClient signals --------
 void DevicePanel::onLensConnectedChanged(bool connected, const QString& label)
 {
+  mConnectedLensEndpoint = connected ? lensEndpoint() : QString();
   setLensUiConnected(connected);
 
   if (!connected)
@@ -551,7 +552,7 @@ void DevicePanel::onLensConnectedChanged(bool connected, const QString& label)
 
 void DevicePanel::onLensTelemetryUpdated(const QMap<QString, QString>& kv)
 {
-  if (mLens->isConnected()) emit environmentReading(mSlotIndex1, lensEndpoint(), kv);
+  if (mLens->isConnected()) emit environmentReading(mSlotIndex1, mConnectedLensEndpoint, kv);
   mLastKv = kv;
   mHaveTelemetry = true;
 

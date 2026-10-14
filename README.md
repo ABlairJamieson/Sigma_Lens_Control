@@ -232,15 +232,35 @@ Choose `1week`, `3days`, `1day`, `12h`, `6h`, `3h`, `1h`, or `10min`.
 Colors identify slots. Temperature scales automatically; humidity uses 0–100%.
 The time axis follows the current time. Gaps longer than 30 seconds are not joined.
 
-Valid readings are saved at most once every 10 seconds per slot and endpoint, matching
-the firmware sensor cache interval. Missing, nonnumeric, or nonfinite readings and
-humidity outside 0–100% are skipped. Daily CSV files include timestamp with timezone,
-slot, bridge endpoint, firmware camera ID (when supplied), temperature, and humidity.
-The tab displays the log directory and reports write failures. On Linux it is normally
-`~/.local/share/SigmaControl/environment/`. Files persist across GUI restarts; the
-most recent week is loaded for plotting. Older CSV files remain available for analysis.
+The **Motion history** tab shows X/Y/Z plots for magnetic field (µT), gyroscope
+(rad/s), or acceleration (m/s²), with the same eight time ranges and slot colors.
+Both views keep one representative heartbeat every ten seconds in memory. The CSV
+retains **every received sensor/status heartbeat**, normally every two seconds,
+regardless of the selected tab or the device's UI refresh setting. Missing or invalid
+measurements are blank; valid measurements from the other sensors are still saved.
+The GUI requests status automatically when a connected bridge is quiet for five seconds.
+Firmware heartbeat output is independent of debug verbosity in the updated firmware;
+the GUI's status requests also support the older firmware. Firmware changes require
+building and flashing the Teensy separately.
 
-Build with Qt Widgets, Network, and SerialPort (Qt 5.15 or Qt 6), qmake, and a C++17 compiler:
+Logs include timestamp with timezone, slot, actual connected endpoint, firmware camera
+ID, temperature, humidity, pressure, magnetic X/Y/Z, gyro X/Y/Z, acceleration X/Y/Z,
+and heading. The tab displays the log directory and reports write/archive failures.
+On Linux it is normally `~/.local/share/SigmaControl/environment/`.
+
+A new `week_YYYY-MM-DD.csv` file starts each Monday at local midnight. Completed weeks
+are compressed in the background to `.csv.gz`, with lossless verification before the
+original CSV is removed. Maintenance runs on startup and every minute, including
+when no bridge is connected. Archives are retained indefinitely. Previous daily CSV
+logs remain readable and are also compressed once their week is complete. The most
+recent week of history loads automatically from both plain and gzip files on startup.
+To extract any archived week for analysis, use `gzip -dk week_YYYY-MM-DD.csv.gz`.
+If an archive conflicts with its CSV or compression fails, both are preserved and
+an error is reported. Sensor logging requires the GUI to remain running and the
+lens/Teensy bridges to be connected.
+
+Build with Qt Widgets, Concurrent, Network, and SerialPort (Qt 5.15 or Qt 6), zlib
+development headers/library, qmake, and a C++17 compiler:
 
 ```bash
 mkdir -p frontend/build

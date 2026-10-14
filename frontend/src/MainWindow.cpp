@@ -79,6 +79,7 @@ MainWindow::MainWindow(QWidget *parent)
 
   mEnvironmentHistory = new EnvironmentHistory(this);
   ui->tabWidget_devices->addTab(mEnvironmentHistory, "Environment history");
+  ui->tabWidget_devices->addTab(mEnvironmentHistory->createMotionTab(this), "Motion history");
   connect(mEnvironmentHistory, &EnvironmentHistory::loggingError, this, [this](const QString& message) { onPanelStatusMessage(0, message); });
   initPanels();
   updateCaptureAllEnabled();

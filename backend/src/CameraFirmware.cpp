@@ -273,9 +273,8 @@ void CameraFirmware::run()
       Serial.println("DBG: heartbeat skipping sensor read, logic rail is off");
     }
 
-    if (debugLevel >= DBG_INFO) {
-      Serial.println(getStatus());
-    }
+    // Telemetry is part of the control protocol, independent of debug verbosity.
+    Serial.println(getStatus());
   }
 
   unsigned long currentTime = micros();

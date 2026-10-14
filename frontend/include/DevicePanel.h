@@ -139,6 +139,7 @@ private:
 
   // backend-reported lens FSM state: Off / Idle / LinkEstablishment / ...
   QString mLensBackendState;
+  QString mConnectedLensEndpoint;
 
 };
 
