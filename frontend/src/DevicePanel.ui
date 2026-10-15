@@ -438,6 +438,8 @@
       <string>Telemetry</string>
      </property>
      <layout class="QGridLayout" name="gridTelemetry">
+      <item row="6" column="0"><widget class="QLabel" name="label_firmware"><property name="text"><string>Firmware</string></property></widget></item>
+      <item row="6" column="1" colspan="5"><widget class="QLabel" name="value_firmware"><property name="text"><string>-</string></property></widget></item>
       <item row="3" column="0">
        <widget class="QLabel" name="label_accel">
         <property name="text">

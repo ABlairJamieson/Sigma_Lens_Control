@@ -1,0 +1,4 @@
+{
+  "1": {"host": "192.168.50.2", "lens_port": 5000, "camera_port": 5001},
+  "2": {"host": "192.168.50.3", "lens_port": 5000, "camera_port": 5001}
+}

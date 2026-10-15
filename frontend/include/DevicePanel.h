@@ -7,6 +7,7 @@
 #include <QString>
 #include <QSettings>
 #include <QFileDialog>
+#include <QJsonObject>
 
 
 QT_BEGIN_NAMESPACE
@@ -52,6 +53,8 @@ public:
   // Convenience status for MainWindow
   bool lensConnected() const;
   bool cameraConnected() const;
+  bool cameraBusy() const;
+  QString connectedCameraEndpoint() const { return mConnectedCameraEndpoint; }
 
   LedState lensLedState() const;
   LedState cameraLedState() const;
@@ -62,6 +65,7 @@ public slots:
   void requestCameraStatus();
 
 signals:
+  void cameraCaptureBusy(int slot1, bool busy);
   void environmentReading(int slot1, const QString& endpoint, const QMap<QString, QString>& values);
   void lensLedStateChanged(int slot1, DevicePanel::LedState state);
   void cameraLedStateChanged(int slot1, DevicePanel::LedState state);
@@ -139,7 +143,9 @@ private:
 
   // backend-reported lens FSM state: Off / Idle / LinkEstablishment / ...
   QString mLensBackendState;
-  QString mConnectedLensEndpoint;
+  QString mConnectedLensEndpoint, mConnectedCameraEndpoint;
+  QJsonObject mTelemetrySnapshot;
+  QString mTelemetryTimestamp;
 
 };
 

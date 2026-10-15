@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <QJsonObject>
 
 
 static QString exposureToFriendlyString(double ms)
@@ -108,6 +109,7 @@ DevicePanel::DevicePanel(QWidget* parent)
   connect(mLens, &LensClient::rawRxLine,        this, &DevicePanel::onLensRawLine);
   connect(mLens, &LensClient::statusMessage,    this, &DevicePanel::onLensStatusMessage);
 
+  connect(mCam, &CameraClient::busyChanged, this, [this](bool busy) { emit cameraCaptureBusy(mSlotIndex1, busy); });
   connect(mCam,  &CameraClient::connectedChanged, this, &DevicePanel::onCameraConnectedChanged);
   connect(mCam,  &CameraClient::statusMessage,    this, &DevicePanel::onCameraStatusMessage);
   connect(mCam,  &CameraClient::captureSaved,     this, &DevicePanel::onCameraCaptureSaved);
@@ -470,6 +472,8 @@ QString DevicePanel::makeCapturePrefix() const
   return QString("slot%1_%2").arg(mSlotIndex1).arg(ts);
 }
 
+bool DevicePanel::cameraBusy() const { return mCam && mCam->isBusy(); }
+
 void DevicePanel::capture()
 {
   if (!mCam || !mCam->isConnected())
@@ -497,6 +501,10 @@ void DevicePanel::capture()
   const int apertureRaw = ui->apertureValueSlider->value();
   const double fNumber = fNumberFromRaw(static_cast<uint16_t>(apertureRaw));
   const bool hasLensMeta = (mLensBackendState == "RegularMessaging");
+  QJsonObject requested{{"focus_raw", focusRaw}, {"aperture_raw", apertureRaw}, {"f_number", fNumber}, {"exposure_us", exposureUs}, {"gain", s.gain}};
+  mCam->setCaptureContext(QJsonObject{{"slot", mSlotIndex1}, {"camera_endpoint", mConnectedCameraEndpoint},
+    {"lens_endpoint", mConnectedLensEndpoint}, {"firmware_version", mTelemetrySnapshot.value("FW").toString("unknown")}, {"requested", requested}, {"lens_telemetry", mTelemetrySnapshot},
+    {"telemetry_received_at", mTelemetryTimestamp}, {"requested_at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)}});
   mCam->captureStream(exposureUs, s.gain, outdir, prefix, format,
                       hasLensMeta, focusRaw, apertureRaw, fNumber);
 }
@@ -529,6 +537,8 @@ void DevicePanel::onLensConnectedChanged(bool connected, const QString& label)
   {
     mHaveTelemetry = false;
     mLastKv.clear();
+    mTelemetrySnapshot = QJsonObject(); mTelemetryTimestamp.clear();
+    ui->value_firmware->setText("-");
     mLensBackendState.clear();
     ui->value_lensState->setText("Disconnected");
   }
@@ -553,6 +563,12 @@ void DevicePanel::onLensConnectedChanged(bool connected, const QString& label)
 void DevicePanel::onLensTelemetryUpdated(const QMap<QString, QString>& kv)
 {
   if (mLens->isConnected()) emit environmentReading(mSlotIndex1, mConnectedLensEndpoint, kv);
+  if (kv.contains("ID") && kv.contains("S")) {
+    mTelemetrySnapshot = QJsonObject();
+    for (auto it = kv.constBegin(); it != kv.constEnd(); ++it) mTelemetrySnapshot[it.key()] = it.value();
+    mTelemetryTimestamp = QDateTime::currentDateTime().toString(Qt::ISODateWithMs);
+    ui->value_firmware->setText(kv.value("FW", "Unknown (older firmware)"));
+  }
   mLastKv = kv;
   mHaveTelemetry = true;
 
@@ -618,6 +634,7 @@ void DevicePanel::onLensStatusMessage(const QString& msg)
 // -------- CameraClient signals --------
 void DevicePanel::onCameraConnectedChanged(bool connected)
 {
+  mConnectedCameraEndpoint = connected ? cameraEndpoint() : QString();
   setCameraUiConnected(connected);
   setOverallStatusText();
 

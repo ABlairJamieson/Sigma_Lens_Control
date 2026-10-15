@@ -16,6 +16,16 @@
 #include <QDateTime>
 #include <QDir>
 #include "EnvironmentHistory.h"
+#include "LiveViewClient.h"
+#include <QCheckBox>
+#include <QApplication>
+#include <QPushButton>
+#include <QDialog>
+#include <QLabel>
+#include <QScreen>
+#include <QHBoxLayout>
+#include <QVBoxLayout>
+#include <QKeyEvent>
 
 
 void MainWindow::openLogFile()
@@ -67,7 +77,8 @@ MainWindow::MainWindow(QWidget *parent)
   {
     ui->label_mainPreview->installEventFilter(this);
     ui->label_mainPreview->setCursor(Qt::PointingHandCursor);
-    ui->label_mainPreview->setToolTip("Click to open the last captured TIFF");
+    ui->label_mainPreview->setToolTip("Double-click for fullscreen. When live view is off, click to open the last captured TIFF.");
+    ui->label_mainPreview->setScaledContents(false);
   }
 
 
@@ -81,12 +92,32 @@ MainWindow::MainWindow(QWidget *parent)
   ui->tabWidget_devices->addTab(mEnvironmentHistory, "Environment history");
   ui->tabWidget_devices->addTab(mEnvironmentHistory->createMotionTab(this), "Motion history");
   connect(mEnvironmentHistory, &EnvironmentHistory::loggingError, this, [this](const QString& message) { onPanelStatusMessage(0, message); });
+  mLive = new LiveViewClient(this);
+  auto liveControls = new QHBoxLayout;
+  mLiveToggle = new QCheckBox("Live view", this); mLiveToggle->setObjectName("check_liveView");
+  mFullscreenButton = new QPushButton("Fullscreen", this); mFullscreenButton->setObjectName("btn_fullscreen");
+  liveControls->addWidget(mLiveToggle); liveControls->addStretch(); liveControls->addWidget(mFullscreenButton);
+  ui->verticalLayout_previewBox->insertLayout(0, liveControls);
+  connect(mLiveToggle, &QCheckBox::toggled, this, [this](bool on) { if (on) startLive(); else mLive->stop(); });
+  connect(mFullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
+  connect(mLive, &LiveViewClient::frameReady, this, [this](const QImage& image) {
+    mPreviewFrames[mPreviewSlot-1] = image; renderPreview();
+  });
+  connect(mLive, &LiveViewClient::failed, this, [this](const QString& message) {
+    mLiveToggle->setChecked(false); onPanelStatusMessage(mPreviewSlot, message);
+  });
+  connect(ui->tabWidget_devices, &QTabWidget::currentChanged, this, [this](int index) {
+    if (index < 0 || index >= 8 || index+1 == mPreviewSlot) return;
+    mLive->stop(); mPreviewSlot = index+1; renderPreview(); updatePreviewControls();
+    if (mLiveToggle->isChecked()) startLive();
+  });
   initPanels();
-  updateCaptureAllEnabled();
+  updateCaptureAllEnabled(); updatePreviewControls();
 }
 
 MainWindow::~MainWindow()
 {
+  if (mLive) mLive->stop();
   delete ui;
 }
 
@@ -94,7 +125,7 @@ void MainWindow::showAbout()
 {
   QMessageBox::about(this, "About",
     "Sigma Lens Control (multi-slot)\n"
-    "Qt 6 frontend for controlling Sigma lens (Teensy) and ASI camera via BeagleY bridge.\n");
+    "Qt frontend for controlling Sigma lens (Teensy) and ASI camera via BeagleY bridge.\n");
 }
 
 void MainWindow::initPanels()
@@ -114,6 +145,11 @@ void MainWindow::initPanels()
     p->setSlotIndex(i + 1);
     mPanels.push_back(p);
 
+    connect(p, &DevicePanel::cameraCaptureBusy, this, [this](int slot, bool busy) {
+      if (slot != mPreviewSlot) return;
+      if (busy) mLive->stop();
+      else if (mLiveToggle->isChecked()) startLive();
+    });
     connect(p, &DevicePanel::environmentReading, mEnvironmentHistory, &EnvironmentHistory::record);
     connect(p, &DevicePanel::lensLedStateChanged,   this, &MainWindow::onLensLedChanged);
     connect(p, &DevicePanel::cameraLedStateChanged, this, &MainWindow::onCameraLedChanged);
@@ -153,24 +189,56 @@ void MainWindow::setLed(QWidget* w, DevicePanel::LedState st)
     "border-radius:7px; border:1px solid #444;"
     "background:%1;").arg(color));
 }
-void MainWindow::onPanelPreviewSaved(int slot1, const QString& path)
-{
-  Q_UNUSED(slot1);
-
-  if (!ui->label_mainPreview || !QFileInfo::exists(path))
-    return;
-
-  QPixmap pm(path);
-  if (!pm.isNull())
-  {
-    ui->label_mainPreview->setPixmap(pm);
+void MainWindow::startLive() {
+  auto panel = panelBySlot1(mPreviewSlot);
+  if (!panel || !panel->cameraConnected()) { mLiveToggle->setChecked(false); return; }
+  if (panel->cameraBusy()) return;
+  const auto settings = panel->cameraSettings();
+  mLive->start(panel->connectedCameraEndpoint(), qRound(settings.exposureMs*1000), settings.gain);
+}
+void MainWindow::updatePreviewControls() {
+  auto panel = panelBySlot1(mPreviewSlot);
+  const bool connected = panel && panel->cameraConnected();
+  mLiveToggle->setEnabled(connected);
+  if (!connected) mLiveToggle->setChecked(false);
+}
+void MainWindow::renderPreview() {
+  const auto& image = mPreviewFrames[mPreviewSlot-1];
+  ui->group_preview->setTitle(QString("Preview — Slot %1").arg(mPreviewSlot));
+  if (image.isNull()) {
+    ui->label_mainPreview->setPixmap(QPixmap());
+    ui->label_mainPreview->setText("Capture an image or enable live view.");
+  } else {
     ui->label_mainPreview->setText(QString());
-    onPanelStatusMessage(slot1, "Preview loaded: " + path);
+    ui->label_mainPreview->setPixmap(QPixmap::fromImage(image).scaled(ui->label_mainPreview->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
   }
-  else
-  {
-    onPanelStatusMessage(slot1, "Preview pixmap load failed: " + path);
+  if (mFullscreenLabel && mFullscreen->isVisible()) {
+    if (image.isNull()) { mFullscreenLabel->clear(); mFullscreenLabel->setText("No image for this slot. Esc to close."); }
+    else { mFullscreenLabel->setText(QString()); mFullscreenLabel->setPixmap(QPixmap::fromImage(image).scaled(mFullscreenLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation)); }
   }
+}
+void MainWindow::openFullscreen() {
+  if (!mFullscreen) {
+    mFullscreen = new QDialog(this); mFullscreen->setObjectName("fullscreenPreview");
+    mFullscreen->setWindowTitle("Sigma Control — Preview (Esc to close)");
+    mFullscreen->setStyleSheet("background:black;");
+    auto layout = new QVBoxLayout(mFullscreen); layout->setContentsMargins(0,0,0,0);
+    mFullscreenLabel = new QLabel("Capture an image or enable live view. Esc to close.", mFullscreen);
+    mFullscreenLabel->setAlignment(Qt::AlignCenter); mFullscreenLabel->setStyleSheet("color:white;");
+    mFullscreenLabel->setMinimumSize(1,1); mFullscreenLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    layout->addWidget(mFullscreenLabel); mFullscreen->installEventFilter(this);
+    connect(mFullscreen, &QDialog::finished, this, [this] { mLive->setTargetSize(QSize(1280,720)); });
+  }
+  mFullscreen->setGeometry(screen()->geometry()); mFullscreen->showFullScreen();
+  const auto screenSize = mFullscreen->screen()->size() * mFullscreen->screen()->devicePixelRatio();
+  mLive->setTargetSize(screenSize); renderPreview();
+}
+void MainWindow::onPanelPreviewSaved(int slot1, const QString& path) {
+  if (slot1 < 1 || slot1 > 8) return;
+  QImage image(path);
+  if (image.isNull()) { onPanelStatusMessage(slot1, "Preview load failed: " + path); return; }
+  mPreviewFrames[slot1-1] = image;
+  if (slot1 == mPreviewSlot) renderPreview();
 }
 void MainWindow::onLensLedChanged(int slot1, DevicePanel::LedState state)
 {
@@ -193,6 +261,7 @@ void MainWindow::onLensLedChanged(int slot1, DevicePanel::LedState state)
 
 void MainWindow::onCameraLedChanged(int slot1, DevicePanel::LedState state)
 {
+  if (slot1 == mPreviewSlot) updatePreviewControls();
   QWidget* led = nullptr;
   switch (slot1)
   {
@@ -230,25 +299,24 @@ void MainWindow::onPanelStatusMessage(int slot1, const QString& msg)
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
+  if ((obj == ui->label_mainPreview || obj == mFullscreen) && event->type() == QEvent::Resize)
+    QTimer::singleShot(0, this, &MainWindow::renderPreview);
+  if (obj == ui->label_mainPreview && event->type() == QEvent::MouseButtonDblClick) { ++mPreviewClickGeneration; openFullscreen(); return true; }
+
   if (obj == ui->label_mainPreview && event->type() == QEvent::MouseButtonPress)
   {
     auto* me = static_cast<QMouseEvent*>(event);
     if (me->button() == Qt::LeftButton)
     {
-      if (!mLastCapturedTiffPath.isEmpty() && QFileInfo::exists(mLastCapturedTiffPath))
-      {
-        const bool ok = QDesktopServices::openUrl(
-            QUrl::fromLocalFile(mLastCapturedTiffPath));
-
-        if (ok)
-          onPanelStatusMessage(0, "Opened TIFF in external viewer: " + mLastCapturedTiffPath);
-        else
-          onPanelStatusMessage(0, "Failed to open TIFF in external viewer: " + mLastCapturedTiffPath);
-      }
-      else
-      {
-        onPanelStatusMessage(0, "No captured TIFF available to open");
-      }
+      const int generation = ++mPreviewClickGeneration;
+      QTimer::singleShot(QApplication::doubleClickInterval(), this, [this,generation] {
+        if (generation != mPreviewClickGeneration || mLiveToggle->isChecked()) return;
+        const auto path = mCapturePaths[mPreviewSlot-1];
+        if (!path.isEmpty() && QFileInfo::exists(path)) {
+          const bool opened = QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+          onPanelStatusMessage(mPreviewSlot, (opened ? "Opened TIFF: " : "Cannot open TIFF: ") + path);
+        }
+      });
       return true;
     }
   }
@@ -259,6 +327,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 void MainWindow::onPanelCaptureSaved(int slot1, const QString& path)
 {
   mLastCapturedTiffPath = path;
+  if (slot1 >= 1 && slot1 <= 8) mCapturePaths[slot1-1] = path;
   if (mCaptureAllTotal > 0)
   {
     mCaptureAllDone++;

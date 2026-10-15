@@ -8,6 +8,7 @@
 #include <QString>
 #include <QFile>
 #include <QTextStream>
+#include <QImage>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -15,6 +16,11 @@ QT_END_NAMESPACE
 
 
 class EnvironmentHistory;
+class LiveViewClient;
+class QCheckBox;
+class QPushButton;
+class QLabel;
+class QDialog;
 
 class MainWindow : public QMainWindow
 {
@@ -41,6 +47,19 @@ private slots:
   void onPanelPreviewSaved(int slot1, const QString& path);
   
 private:
+  LiveViewClient* mLive = nullptr;
+  QCheckBox* mLiveToggle = nullptr;
+  QPushButton* mFullscreenButton = nullptr;
+  QDialog* mFullscreen = nullptr;
+  QLabel* mFullscreenLabel = nullptr;
+  QVector<QImage> mPreviewFrames = QVector<QImage>(8);
+  QVector<QString> mCapturePaths = QVector<QString>(8);
+  int mPreviewSlot = 1;
+  int mPreviewClickGeneration = 0;
+  void startLive();
+  void renderPreview();
+  void openFullscreen();
+  void updatePreviewControls();
   void initPanels();
   DevicePanel* panelAtTab(int tabIndex) const;
   DevicePanel* panelBySlot1(int slot1) const;

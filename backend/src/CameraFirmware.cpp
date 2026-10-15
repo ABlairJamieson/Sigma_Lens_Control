@@ -1,5 +1,6 @@
 #include "../include/CameraFirmware.h"
 #include "../include/Config.h"
+#include "../include/FirmwareVersion.h"
 
 RingBuffer<EVENT, 20> CameraFirmware::mInputBuffer;
 
@@ -302,7 +303,10 @@ void CameraFirmware::handleFrontEndInput()
       arg = message.substring(spaceIndex + 1);
     }
 
-    if (cmd == "SA") {
+    if (cmd == "ST" || cmd == "VERSION") {
+      Serial.println(getStatus());
+    }
+    else if (cmd == "SA") {
       unsigned int aperture = (unsigned int)arg.toInt();
       if(debugLevel >= DBG_VERBOSE) {
         Serial.printf("DBG: received SA %u currentA=%u state=%s\n",
@@ -366,7 +370,7 @@ void CameraFirmware::sendMessage(const byte* message, int length)
 
 String CameraFirmware::getStatus()
 {
-  return "ID:"+String(cameraID)+",F:"+String(lensStatus.currentLensPos) +
+  return "ID:"+String(cameraID)+",FW:"+String(firmwareVersion)+",F:"+String(lensStatus.currentLensPos) +
          ",A:" + String(lensStatus.currentAperture) +
          ",S:"+String(lensStatus.currentState)+","+lensStatus.extra;
 }

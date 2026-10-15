@@ -279,3 +279,36 @@ qmake ../../tests/environment_history_test.pro
 make -j4
 QT_QPA_PLATFORM=offscreen ./environment_history_test
 ```
+
+## Firmware v1, live preview, and automation
+
+Firmware `1.0.0` reports its version in status telemetry; `firmware/v1` preserves the
+released source. See [firmware version policy](backend/README.md) before future backend
+changes. Local camera IDs remain deployment-specific.
+
+Above the preview, **Live view** enables streaming from the selected camera slot.
+Turning it off keeps the latest live frame; a subsequent still capture replaces it.
+Changing camera slots restores that slot's latest preview. The **Fullscreen** button
+(or double-clicking the preview) displays live or frozen imagery fitted to the screen;
+press **Esc** to return. Fullscreen requests a screen-sized stream, capped at 4K.
+Live view uses the slot's exposure/gain when enabled (preview exposure is capped at
+2 seconds); still captures retain the requested full exposure and RAW16 resolution.
+Capturing through the GUI pauses and then resumes live view automatically.
+
+Update/restart `asi-bridge` on each BeagleY before enabling live view; older bridges
+continue to support still capture but will reject the new live command. The versioned
+firmware also requires a separate Teensy build/upload. See [bridge deployment and API](asi_bridge/README.md).
+
+For gantry/calibration automation, [the Python capture tool](tools/README.md) takes
+slot, focus, aperture, exposure, gain, and an exact output filename. It also supports
+numbered series, confirms lens settings, and saves a JSON metadata/telemetry sidecar
+next to every TIFF. The GUI's still captures now also save JSON sidecars.
+
+Hardware-free validation:
+
+```bash
+python3 -m unittest discover -s tests -v
+# Requires NumPy, OpenCV, and Pillow for the fake camera and file validation.
+# Build/run frontend/tests/environment_history_test.pro as documented above;
+# it also checks live video decoding, freezing, fullscreen, capture/resume, and sidecars.
+```

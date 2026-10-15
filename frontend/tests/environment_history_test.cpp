@@ -8,6 +8,14 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QLabel>
+#include <QCheckBox>
+#include <QDialog>
+#include <QBuffer>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QTimer>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSpinBox>
@@ -20,6 +28,7 @@
 #include <zlib.h>
 #include <cmath>
 #include <iostream>
+#include <memory>
 static void require(bool condition, const char* message) {
   if (!condition) { std::cerr << message << '\n'; std::exit(1); }
 }
@@ -164,6 +173,88 @@ int main(int argc, char** argv) {
     for (auto panel : panels) panel->findChild<QPushButton*>("btn_lensDisconnect")->click();
     for (auto socket : clients) { socket->write("ID:42,T:30,H:70,S:Idle\n"); socket->flush(); }
     events(50); require(read(path).trimmed().split('\n').size()==25, "disconnected clients stop logging");
+  }
+  {
+    QTcpServer camera;
+    require(camera.listen(QHostAddress::LocalHost), "mock camera listening");
+    QImage liveImage(640,480,QImage::Format_RGB32); liveImage.fill(QColor("#336699"));
+    QByteArray jpeg; QBuffer jpegBuffer(&jpeg); jpegBuffer.open(QIODevice::WriteOnly);
+    require(liveImage.save(&jpegBuffer, "JPEG"), "JPEG plugin available");
+    int frames = 0, captures = 0; QSize requestedSize; bool rejectLive = false;
+    QObject::connect(&camera, &QTcpServer::newConnection, &camera, [&] {
+      while (camera.hasPendingConnections()) {
+        auto socket = camera.nextPendingConnection();
+        auto buffer = std::make_shared<QByteArray>();
+        QObject::connect(socket, &QTcpSocket::readyRead, socket, [&, socket, buffer] {
+          buffer->append(socket->readAll()); int newline;
+          while ((newline = buffer->indexOf('\n')) >= 0) {
+            auto request = QJsonDocument::fromJson(buffer->left(newline)).object(); buffer->remove(0,newline+1);
+            const auto command = request.value("cmd").toString();
+            if (command == "live_frame") {
+              if (rejectLive) { socket->write("{\"ok\":false,\"error\":\"Unknown cmd: live_frame\"}\n"); continue; }
+              if (frames == 0) { ++frames; socket->write("{\"ok\":true,\"cmd\":\"live_frame\",\"busy\":true}\n"); continue; }
+              ++frames; requestedSize = QSize(request.value("max_width").toInt(), request.value("max_height").toInt());
+              QJsonObject header{{"ok",true},{"cmd","live_frame"},{"pixfmt","jpeg"},{"nbytes",jpeg.size()},{"w",640},{"h",480}};
+              const auto json = QJsonDocument(header).toJson(QJsonDocument::Compact)+"\n";
+              // Deliberately fragment both JSON and JPEG across readyRead events.
+              socket->write(json.left(7));
+              QTimer::singleShot(5, socket, [socket,json,jpeg] {
+                if (socket->state() == QAbstractSocket::ConnectedState) socket->write(json.mid(7)+jpeg.left(50));
+              });
+              QTimer::singleShot(10, socket, [socket,jpeg] {
+                if (socket->state() == QAbstractSocket::ConnectedState) socket->write(jpeg.mid(50));
+              });
+            } else if (command == "capture_stream") {
+              ++captures;
+              QJsonObject header{{"ok",true},{"cmd","capture_stream"},{"pixfmt","raw16_le"},{"nbytes",64},{"w",8},{"h",4},
+                                 {"exposure_us",request.value("exposure_us")},{"gain",request.value("gain")}};
+              socket->write(QJsonDocument(header).toJson(QJsonDocument::Compact)+"\n"+QByteArray(64, char(127)));
+            } else socket->write("{\"ok\":true}\n");
+          }
+        });
+      }
+    });
+    MainWindow window; window.resize(1300,900); window.show();
+    auto tabs = window.findChild<QTabWidget*>("tabWidget_devices");
+    auto panel = tabs->widget(0)->findChild<DevicePanel*>(); require(panel, "first device panel");
+    panel->findChild<QLineEdit*>("edit_host")->setText("127.0.0.1");
+    panel->findChild<QSpinBox*>("spin_cameraPort")->setValue(camera.serverPort());
+    panel->findChild<QLineEdit*>("edit_saveDir")->setText(temporary.path()+"/gui-captures");
+    panel->findChild<QPushButton*>("btn_cameraConnect")->click(); events(30);
+    auto toggle = window.findChild<QCheckBox*>("check_liveView");
+    auto preview = window.findChild<QLabel*>("label_mainPreview");
+    require(toggle && toggle->isEnabled(), "live toggle enabled for connected camera");
+    toggle->setChecked(true); events(500);
+    require(frames >= 2 && !preview->pixmap(Qt::ReturnByValue).isNull(), "fragmented live frames decoded and displayed");
+    require(requestedSize == QSize(1280,720), "normal live resolution");
+    window.findChild<QPushButton*>("btn_fullscreen")->click(); events(500);
+    auto fullscreen = window.findChild<QDialog*>("fullscreenPreview");
+    require(fullscreen && fullscreen->isVisible() && fullscreen->isFullScreen(), "fullscreen opens");
+    require(requestedSize.width() >= 160 && requestedSize.height() >= 120, "fullscreen requests screen-sized frames");
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(fullscreen, &escape); events(300); require(!fullscreen->isVisible(), "fullscreen closes");
+    require(requestedSize == QSize(1280,720), "normal stream dimensions restored");
+    const int beforeCaptureFrames = frames;
+    panel->capture(); events(500);
+    require(captures == 1 && frames > beforeCaptureFrames && toggle->isChecked(), "live view resumes after still capture");
+    QDir capturesDir(temporary.path()+"/gui-captures");
+    const auto images = capturesDir.entryList({"*.tiff"}, QDir::Files);
+    require(images.size()==1, "GUI still TIFF saved");
+    QFile metadataFile(capturesDir.filePath(images[0])+".json");
+    require(metadataFile.open(QIODevice::ReadOnly), "GUI metadata sidecar saved");
+    const auto metadata = QJsonDocument::fromJson(metadataFile.readAll()).object();
+    require(metadata.value("slot").toInt()==1 && metadata.value("requested").isObject() && metadata.value("camera_reported").toObject().value("w").toInt()==8, "GUI metadata contains slot, settings, actual camera header");
+    toggle->setChecked(false); events(50);
+    const auto frozen = preview->pixmap(Qt::ReturnByValue).toImage(); const int stoppedFrames = frames;
+    events(400); require(preview->pixmap(Qt::ReturnByValue).toImage()==frozen && frames==stoppedFrames, "live off freezes last frame and stops requesting frames");
+    panel->capture(); events(300);
+    require(captures==2 && !toggle->isChecked() && frames==stoppedFrames, "still capture works with live view off");
+    require(preview->pixmap(Qt::ReturnByValue).toImage()!=frozen, "new still replaces frozen live frame");
+    rejectLive = true; toggle->setChecked(true); events(100);
+    require(!toggle->isChecked() && !preview->pixmap(Qt::ReturnByValue).isNull(), "older service error stops live mode and preserves last frame");
+    window.grab().save(imagePath+"_gui.png");
+    panel->findChild<QPushButton*>("btn_cameraDisconnect")->click(); events(30);
+    require(!toggle->isEnabled(), "disconnect disables live view");
   }
   std::cout << "Weekly sensor archive and history tests passed\n";
 }
