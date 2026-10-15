@@ -63,6 +63,10 @@ MainWindow::MainWindow(QWidget *parent)
 {
   ui->setupUi(this);
 
+  // Keep the control pane width stable; give window growth to the preview.
+  ui->splitter_main->setStretchFactor(0, 0);
+  ui->splitter_main->setStretchFactor(1, 1);
+
   openLogFile();
 
   if (ui->actionAbout)
