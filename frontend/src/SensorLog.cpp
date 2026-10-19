@@ -175,7 +175,12 @@ void SensorLog::record(int slot, const QString& endpoint, const QMap<QString, QS
   if (!QDir().mkpath(mDirectory)) { emit loggingError("Cannot create sensor log directory: " + mDirectory); return; }
   // Serialize append and archive operations for each file.
   QLockFile writeLock(mDirectory + "/" + weeklyName(now.date()) + ".lock");
-  if (!writeLock.tryLock(100)) { emit loggingError("Sensor log is locked; reading could not be saved"); return; }
+  if (!writeLock.tryLock(100)) {
+    const auto reason = writeLock.error() == QLockFile::PermissionError
+      ? "No write access to sensor log folder: "
+      : "Sensor log is busy or its lock cannot be created: ";
+    emit loggingError(reason + mDirectory); return;
+  }
   QFile file(mDirectory + "/" + weeklyName(now.date()));
   if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) { emit loggingError("Cannot open sensor log: " + file.errorString()); return; }
   QTextStream stream(&file);

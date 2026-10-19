@@ -282,8 +282,9 @@ QT_QPA_PLATFORM=offscreen ./environment_history_test
 
 ## Firmware v1, live preview, and automation
 
-Firmware `1.0.0` reports its version in status telemetry; `firmware/v1` preserves the
-released source. See [firmware version policy](backend/README.md) before future backend
+Firmware `2.0.0` reports its version in status telemetry and is preserved on
+`firmware/v2`; `firmware/v1` retains the initial release. V2 restores the connected
+camera's sensor/logic rail startup and protects queued lens replies during handshake. See [firmware version policy](backend/README.md) before future backend
 changes. Local camera IDs remain deployment-specific.
 
 Above the preview, **Live view** enables streaming from the selected camera slot.
@@ -308,7 +309,7 @@ Hardware-free validation:
 
 ```bash
 python3 -m unittest discover -s tests -v
-# Requires NumPy, OpenCV, and Pillow for the fake camera and file validation.
+# Requires NumPy, OpenCV, Pillow, and g++ for the fake camera, file validation, and firmware parser tests.
 # Build/run frontend/tests/environment_history_test.pro as documented above;
 # it also checks live video decoding, freezing, fullscreen, capture/resume, and sidecars.
 ```

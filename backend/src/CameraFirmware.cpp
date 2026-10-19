@@ -43,7 +43,10 @@ void CameraFirmware::updateFSM()
   EVENT input;
   if (mInputBuffer.pop(input))
   {
-    mState->handleInput(*this, input);
+    if (input != EVENT::PROCESS_MESSAGE || mMessagePending) {
+      mState->handleInput(*this, input);
+      if (input == EVENT::PROCESS_MESSAGE) mMessagePending = false;
+    }
   }
   mState->update(*this);
 }
@@ -51,25 +54,44 @@ void CameraFirmware::updateFSM()
 void CameraFirmware::attachHumiditySensor(HumiditySensor* s)
 {
   humiditySensor = s;
-  if (debugLevel >= DBG_INFO) {
-    Serial.println("DBG: humidity sensor attached");
-  }
+  if (!humiditySensor) return;
+
+  // Ensure sensor rail is powered even with no lens
+  pinMode(static_cast<uint8_t>(LENS_PIN::LOGIC_VCC_SW), OUTPUT);
+  digitalWrite(static_cast<uint8_t>(LENS_PIN::LOGIC_VCC_SW), HIGH);
+
+  delay(20); // allow rail + BME280 to come up
+  humiditySensor->begin();   // now it will power-on + init reliably
+
 }
 
 void CameraFirmware::attachImuSensor(ImuSensor* s)
 {
   imuSensor = s;
-  if (debugLevel >= DBG_INFO) {
-    Serial.println("DBG: IMU sensor attached");
-  }
+  if (!imuSensor) return;
+
+  // Ensure sensor rail is powered even with no lens
+  pinMode(static_cast<uint8_t>(LENS_PIN::LOGIC_VCC_SW), OUTPUT);
+  digitalWrite(static_cast<uint8_t>(LENS_PIN::LOGIC_VCC_SW), HIGH);
+
+  delay(20); // allow rail + IMU to come up
+  bool ok = imuSensor->begin();   // now it will power-on + init reliably
+  Serial.printf("LSM6DS3 begin @0x6A -> %s\n", ok ? "OK" : "FAIL");
 }
 
 void CameraFirmware::attachMagSensor(MagSensor* s)
 {
   magSensor = s;
-  if (debugLevel >= DBG_INFO) {
-    Serial.println("DBG: mag sensor attached");
-  }
+  if (!magSensor) return;
+
+  // Ensure sensor rail is powered even with no lens
+  pinMode(static_cast<uint8_t>(LENS_PIN::LOGIC_VCC_SW), OUTPUT);
+  digitalWrite(static_cast<uint8_t>(LENS_PIN::LOGIC_VCC_SW), HIGH);
+
+  delay(20); // allow rail + Mag sensor to come up
+  bool ok = magSensor->begin();   // now it will power-on + init reliably
+  Serial.printf("LIS3MDL begin @0x1E -> %s\n", ok ? "OK" : "FAIL");
+
 }
 
 void CameraFirmware::scheduleSensorReinit(unsigned long delayMs)
@@ -119,7 +141,8 @@ void CameraFirmware::reinitSensors()
 
 void CameraFirmware::ensureLogicRailForSensors()
 {
-  // Lens owns LOGIC_VCC_SW. Sensors must never force it on.
+  // Startup initializes the shared rail before the first lens handshake.
+  // Runtime checks do not change rail ownership during a handshake.
   if (!digitalRead(static_cast<uint8_t>(LENS_PIN::LOGIC_VCC_SW))) {
     if (debugLevel >= DBG_VERBOSE) {
       Serial.println("DBG: sensor access skipped, logic rail is off");
@@ -159,6 +182,7 @@ void CameraFirmware::reset()
   disablePolling();
   lensToBodyBufferPosition = INVALID_POSITION;
   packetLength = 0;
+  mMessagePending = false;
   mSensorsNeedReinit = false;
 }
 
@@ -182,7 +206,9 @@ void CameraFirmware::run()
   // Deferred sensor reinit after lens has brought logic rail up.
   if (mSensorsNeedReinit) {
     long dt = (long)(millis() - mSensorReinitAtMs);
-    if (dt >= 0) {
+    // Sensor begin() calls block long enough to lose negotiation replies.
+    if (dt >= 0 && mState == &LensState::regularMessaging &&
+        !mMessagePending && Serial1.available() == 0) {
       if (debugLevel >= DBG_INFO) {
         Serial.println("DBG: running scheduled sensor reinit");
       }
@@ -372,14 +398,18 @@ String CameraFirmware::getStatus()
 {
   return "ID:"+String(cameraID)+",FW:"+String(firmwareVersion)+",F:"+String(lensStatus.currentLensPos) +
          ",A:" + String(lensStatus.currentAperture) +
-         ",S:"+String(lensStatus.currentState)+","+lensStatus.extra;
+         ",S:"+String(lensStatus.currentState)+
+         ",Rx:"+String(mRxByteCount)+",Pkt:"+String(mRxPacketCount)+","+lensStatus.extra;
 }
 
 void CameraFirmware::processByte()
 {
+  // PROCESS_MESSAGE refers to this shared buffer. Do not overwrite it while queued.
+  if (mMessagePending) return;
   while (Serial1.available() > 0)
   {
     int read = Serial1.read();
+    ++mRxByteCount;
 
     if (lensToBodyBufferPosition == INVALID_POSITION)
     {
@@ -424,7 +454,8 @@ void CameraFirmware::processByte()
     {
       if (read == static_cast<byte>(BYTE_VALUE::EOM))
       {
-        mInputBuffer.push(EVENT::PROCESS_MESSAGE);
+        mMessagePending = mInputBuffer.push(EVENT::PROCESS_MESSAGE);
+        if (mMessagePending) ++mRxPacketCount;
       }
       else
       {
@@ -436,6 +467,7 @@ void CameraFirmware::processByte()
 
       lensToBodyBufferPosition = INVALID_POSITION;
       packetLength = 0;
+      if (mMessagePending) return;
     }
   }
 }
