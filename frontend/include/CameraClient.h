@@ -4,6 +4,7 @@
 #include <QTcpSocket>
 #include <QByteArray>
 #include <QJsonObject>
+#include <QTimer>
 
 class CameraClient : public QObject
 {
@@ -18,6 +19,8 @@ public:
   bool isConnected() const;
 
   void requestStatus();
+  bool isBusy() const { return mBusy; }
+  void setCaptureContext(const QJsonObject& context) { mContext = context; }
 
   void captureStream(int exposureUs,
                      int gain,
@@ -30,6 +33,7 @@ public:
                      double fNumber = -1.0);
 
 signals:
+  void busyChanged(bool busy);
   void connectedChanged(bool connected);
   void statusMessage(const QString& msg);
   void captureSaved(const QString& path);
@@ -63,5 +67,9 @@ private:
 
   QByteArray mRxBuf;
 
+  bool mBusy = false;
+  QTimer mCaptureDeadline;
+  QJsonObject mContext, mPendingContext, mCaptureHeader;
+  void finishCapture();
   QTcpSocket* mSock = nullptr;
 };

@@ -82,6 +82,8 @@ class CameraFirmware
   const int INVALID_POSITION = -999;
   int lensToBodyBufferPosition = INVALID_POSITION;
   int packetLength = INVALID_POSITION;
+  bool mMessagePending = false;
+  uint32_t mRxByteCount = 0, mRxPacketCount = 0;
 
   HumiditySensor* humiditySensor = nullptr;
   ImuSensor* imuSensor = nullptr;

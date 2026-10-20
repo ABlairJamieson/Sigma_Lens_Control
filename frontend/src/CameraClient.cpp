@@ -9,19 +9,27 @@
 #include <QFileInfo>
 #include <QtEndian>
 #include <QtMath>
+#include <QSaveFile>
 
 CameraClient::CameraClient(QObject* parent)
   : QObject(parent),
     mSock(new QTcpSocket(this))
 {
+  mCaptureDeadline.setSingleShot(true);
+  connect(&mCaptureDeadline, &QTimer::timeout, this, [this] { emit statusMessage("Capture timed out"); disconnect(); });
   connect(mSock, &QTcpSocket::readyRead, this, &CameraClient::onReadyRead);
   connect(mSock, &QTcpSocket::errorOccurred, this, &CameraClient::onErrorOccurred);
   connect(mSock, &QTcpSocket::disconnected, this, &CameraClient::onDisconnected);
 }
 
+void CameraClient::finishCapture() {
+  mCaptureDeadline.stop();
+  if (mBusy) { mBusy = false; emit busyChanged(false); }
+}
+
 bool CameraClient::isConnected() const
 {
-  return mSock && mSock->isOpen();
+  return mSock && mSock->state() == QAbstractSocket::ConnectedState;
 }
 
 bool CameraClient::connectToEndpoint(const QString& endpoint)
@@ -64,6 +72,7 @@ void CameraClient::disconnect()
   mExpectedBytes = 0;
   mPayload.clear();
   mPendingSavePath.clear();
+  finishCapture();
 
   emit connectedChanged(false);
 }
@@ -99,6 +108,10 @@ void CameraClient::captureStream(int exposureUs,
                                  int apertureRaw,
                                  double fNumber)
 {
+  if (!isConnected() || mBusy) { emit statusMessage("Camera disconnected or capture already in progress"); return; }
+  mPendingContext = mContext;
+  mBusy = true; emit busyChanged(true);
+  mCaptureDeadline.start(exposureUs/1000 + 60000);
   mPendingExposureUs = exposureUs;
   mPendingGain = gain;
   mPendingHasLensMetadata = hasLensMetadata;
@@ -110,7 +123,7 @@ void CameraClient::captureStream(int exposureUs,
   if (mPendingFormat.isEmpty()) mPendingFormat = "tiff";
 
   QDir().mkpath(outdir);
-  const QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss");
+  const QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd_hh-mm-ss-zzz");
   mPendingSavePath = QDir(outdir).filePath(QString("%1_%2.%3").arg(prefix, ts, "tiff"));
 
   QJsonObject obj;
@@ -211,6 +224,15 @@ void CameraClient::onReadyRead()
       else
       {
         emit statusMessage("Saved TIFF: " + mPendingSavePath);
+        QJsonObject metadata = mPendingContext;
+        metadata["schema_version"] = 1;
+        metadata["camera_reported"] = mCaptureHeader;
+        metadata["saved_at"] = QDateTime::currentDateTime().toString(Qt::ISODateWithMs);
+        metadata["image"] = QFileInfo(mPendingSavePath).absoluteFilePath();
+        QSaveFile sidecar(mPendingSavePath + ".json");
+        const auto metadataBytes = QJsonDocument(metadata).toJson(QJsonDocument::Indented);
+        if (!sidecar.open(QIODevice::WriteOnly) || sidecar.write(metadataBytes) != metadataBytes.size() || !sidecar.commit())
+          emit statusMessage("Image saved but metadata sidecar failed: " + sidecar.errorString());
         emit captureSaved(mPendingSavePath);
 
         // Also generate a smaller 8-bit PNG preview for UI display
@@ -274,6 +296,7 @@ void CameraClient::onReadyRead()
       mPendingFocusRaw = -1;
       mPendingApertureRaw = -1;
       mPendingFNumber = -1.0;
+      finishCapture();
       continue; // there may be another JSON line afterward
     }
 
@@ -305,6 +328,7 @@ void CameraClient::onReadyRead()
     if (!ok)
     {
       emit statusMessage("Camera error: " + obj.value("error").toString());
+      finishCapture();
       continue;
     }
 
@@ -314,12 +338,26 @@ void CameraClient::onReadyRead()
       mW = obj.value("w").toInt(0);
       mH = obj.value("h").toInt(0);
 
-      if (nbytes <= 0 || mW <= 0 || mH <= 0)
+      if (!mBusy || obj.value("pixfmt").toString() != "raw16_le" || nbytes <= 0 || nbytes > 512*1024*1024 || mW <= 0 || mH <= 0 || qint64(mW)*mH*2 != nbytes)
       {
-        emit statusMessage("Camera stream header missing nbytes/w/h");
-        continue;
+        emit statusMessage("Invalid camera RAW16 stream header");
+        disconnect(); return;
       }
 
+      mPendingExposureUs = obj.value("exposure_us").toInt(mPendingExposureUs);
+      mPendingGain = obj.value("gain").toInt(mPendingGain);
+      if (mPendingHasLensMetadata) {
+        const auto lens = mPendingContext.value("lens_telemetry").toObject();
+        bool focusOk, apertureOk;
+        const auto focus = lens.value("F").toString().toInt(&focusOk);
+        const auto aperture = lens.value("A").toString().toInt(&apertureOk);
+        mPendingHasLensMetadata = focusOk && apertureOk;
+        if (mPendingHasLensMetadata) {
+          mPendingFocusRaw = focus; mPendingApertureRaw = aperture;
+          mPendingFNumber = qPow(2.0, (aperture/256.0 - 16.0)/2.0);
+        }
+      }
+      mCaptureHeader = obj;
       mExpectedBytes = nbytes;
       mPayload.clear();
       mExpectingPayload = true;

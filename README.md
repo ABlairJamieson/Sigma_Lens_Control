@@ -220,3 +220,96 @@ journalctl -u asi-bridge -f
 ## Result
 
 Power on Beagley → system is ready in ~10 seconds.
+
+## Temperature and humidity history
+
+The **Environment history** tab plots BME280 temperature (°C) and relative humidity (%)
+for all eight device slots. Connect each slot's lens/Teensy bridge to receive readings;
+the ASI camera connection alone does not supply BME280 telemetry. Logging continues
+while another tab is selected, for as long as the GUI and bridge connections are open.
+
+Choose `1week`, `3days`, `1day`, `12h`, `6h`, `3h`, `1h`, or `10min`.
+Colors identify slots. Temperature scales automatically; humidity uses 0–100%.
+The time axis follows the current time. Gaps longer than 30 seconds are not joined.
+
+The **Motion history** tab shows X/Y/Z plots for magnetic field (µT), gyroscope
+(rad/s), or acceleration (m/s²), with the same eight time ranges and slot colors.
+Both views keep one representative heartbeat every ten seconds in memory. The CSV
+retains **every received sensor/status heartbeat**, normally every two seconds,
+regardless of the selected tab or the device's UI refresh setting. Missing or invalid
+measurements are blank; valid measurements from the other sensors are still saved.
+The GUI requests status automatically when a connected bridge is quiet for five seconds.
+Firmware heartbeat output is independent of debug verbosity in the updated firmware;
+the GUI's status requests also support the older firmware. Firmware changes require
+building and flashing the Teensy separately.
+
+Logs include timestamp with timezone, slot, actual connected endpoint, firmware camera
+ID, temperature, humidity, pressure, magnetic X/Y/Z, gyro X/Y/Z, acceleration X/Y/Z,
+and heading. The tab displays the log directory and reports write/archive failures.
+On Linux it is normally `~/.local/share/SigmaControl/environment/`.
+
+A new `week_YYYY-MM-DD.csv` file starts each Monday at local midnight. Completed weeks
+are compressed in the background to `.csv.gz`, with lossless verification before the
+original CSV is removed. Maintenance runs on startup and every minute, including
+when no bridge is connected. Archives are retained indefinitely. Previous daily CSV
+logs remain readable and are also compressed once their week is complete. The most
+recent week of history loads automatically from both plain and gzip files on startup.
+To extract any archived week for analysis, use `gzip -dk week_YYYY-MM-DD.csv.gz`.
+If an archive conflicts with its CSV or compression fails, both are preserved and
+an error is reported. Sensor logging requires the GUI to remain running and the
+lens/Teensy bridges to be connected.
+
+Build with Qt Widgets, Concurrent, Network, and SerialPort (Qt 5.15 or Qt 6), zlib
+development headers/library, qmake, and a C++17 compiler:
+
+```bash
+mkdir -p frontend/build
+cd frontend/build
+qmake ../SigmaControl.pro
+make -j4
+./SigmaControl
+```
+
+Run the environment history tests (using simulated bridges; no hardware required):
+
+```bash
+mkdir -p frontend/build/tests
+cd frontend/build/tests
+qmake ../../tests/environment_history_test.pro
+make -j4
+QT_QPA_PLATFORM=offscreen ./environment_history_test
+```
+
+## Firmware v1, live preview, and automation
+
+Firmware `2.0.0` reports its version in status telemetry and is preserved on
+`firmware/v2`; `firmware/v1` retains the initial release. V2 restores the connected
+camera's sensor/logic rail startup and protects queued lens replies during handshake. See [firmware version policy](backend/README.md) before future backend
+changes. Local camera IDs remain deployment-specific.
+
+Above the preview, **Live view** enables streaming from the selected camera slot.
+Turning it off keeps the latest live frame; a subsequent still capture replaces it.
+Changing camera slots restores that slot's latest preview. The **Fullscreen** button
+(or double-clicking the preview) displays live or frozen imagery fitted to the screen;
+press **Esc** to return. Fullscreen requests a screen-sized stream, capped at 4K.
+Live view uses the slot's exposure/gain when enabled (preview exposure is capped at
+2 seconds); still captures retain the requested full exposure and RAW16 resolution.
+Capturing through the GUI pauses and then resumes live view automatically.
+
+Update/restart `asi-bridge` on each BeagleY before enabling live view; older bridges
+continue to support still capture but will reject the new live command. The versioned
+firmware also requires a separate Teensy build/upload. See [bridge deployment and API](asi_bridge/README.md).
+
+For gantry/calibration automation, [the Python capture tool](tools/README.md) takes
+slot, focus, aperture, exposure, gain, and an exact output filename. It also supports
+numbered series, confirms lens settings, and saves a JSON metadata/telemetry sidecar
+next to every TIFF. The GUI's still captures now also save JSON sidecars.
+
+Hardware-free validation:
+
+```bash
+python3 -m unittest discover -s tests -v
+# Requires NumPy, OpenCV, Pillow, and g++ for the fake camera, file validation, and firmware parser tests.
+# Build/run frontend/tests/environment_history_test.pro as documented above;
+# it also checks live video decoding, freezing, fullscreen, capture/resume, and sidecars.
+```

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QElapsedTimer>
 #include <QSerialPort>
 #include <QTcpSocket>
 #include <QIODevice>
@@ -42,6 +43,7 @@ private:
   QTcpSocket*  mSock   = nullptr;
   QIODevice*   mIo     = nullptr;
 
+  QElapsedTimer mTelemetryAge;
   QString mRxBuf;
 
   QMap<QString, QString> mLastKv;

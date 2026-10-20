@@ -4,6 +4,7 @@ import sys
 import json
 import time
 import socket
+import select
 import threading
 from datetime import datetime
 
@@ -57,7 +58,7 @@ class ASIBridge:
     """
     Phase 1 bridge:
       - TCP JSON line protocol
-      - commands: status, set, capture, capture_stream
+      - commands: status, set, capture, capture_stream, live_frame, live_stop
       - RAW16 capture always
     """
 
@@ -67,6 +68,9 @@ class ASIBridge:
         self.info = None
         self.controls = None
         self.lock = threading.Lock()
+        self.live_owner = None
+        self.live_config = None
+        self.video_running = False
         self.state = dict(DEFAULTS)
 
     def init_camera(self):
@@ -125,20 +129,104 @@ class ASIBridge:
             log("apply_settings(): cam is None, calling init_camera()")
             self.init_camera()
 
+        self.stop_video()
+
         if exposure_us is not None:
-            self.state["exposure_us"] = int(exposure_us)
             self.cam.set_control_value(asi.ASI_EXPOSURE, int(exposure_us))
+            self.state["exposure_us"] = int(self.cam.get_control_value(asi.ASI_EXPOSURE)[0])
             log(f"apply_settings(): exposure_us={int(exposure_us)}")
 
         if gain is not None:
-            self.state["gain"] = int(gain)
             self.cam.set_control_value(asi.ASI_GAIN, int(gain))
+            self.state["gain"] = int(self.cam.get_control_value(asi.ASI_GAIN)[0])
             log(f"apply_settings(): gain={int(gain)}")
 
-        self.cam.set_image_type(asi.ASI_IMG_RAW16)
-        log("apply_settings(): image type set to RAW16")
+        self.prepare_still()
+        log("apply_settings(): full-resolution RAW16 configured")
 
         time.sleep(0.1)
+
+    def stop_video(self):
+        if self.video_running:
+            self.cam.stop_video_capture()
+            self.video_running = False
+            self.live_config = None
+
+    def prepare_still(self):
+        self.stop_video()
+        width = int(self.info["MaxWidth"]) // 8 * 8
+        height = int(self.info["MaxHeight"]) // 2 * 2
+        self.cam.set_roi_format(width=width, height=height, bins=1,
+                                image_type=asi.ASI_IMG_RAW16)
+        self.cam.set_roi_start_position(0, 0)
+        self.cam.set_control_value(asi.ASI_EXPOSURE, self.state["exposure_us"])
+        self.cam.set_control_value(asi.ASI_GAIN, self.state["gain"])
+
+    def release_live(self, conn):
+        if self.live_owner is conn:
+            try:
+                self.prepare_still()
+            finally:
+                self.live_owner = None
+
+    def live_frame(self, req, conn):
+        if self.cam is None:
+            self.init_camera()
+        if self.live_owner is not None and self.live_owner is not conn:
+            owner = self.live_owner
+            disconnected = False
+            if isinstance(owner, socket.socket):
+                try:
+                    disconnected = bool(select.select([owner], [], [], 0)[0]) and not owner.recv(1, socket.MSG_PEEK)
+                except OSError:
+                    disconnected = True
+            if disconnected:
+                self.release_live(owner)
+            else:
+                return _err("Live view is already in use by another client")
+        max_width = int(req.get("max_width", 1280))
+        max_height = int(req.get("max_height", 720))
+        quality = int(req.get("jpeg_quality", 80))
+        exposure = int(req.get("exposure_us", 50000))
+        gain = int(req.get("gain", self.state["gain"]))
+        if not (160 <= max_width <= 3840 and 120 <= max_height <= 2160 and 30 <= quality <= 95):
+            return _err("Live size must be 160..3840 x 120..2160; JPEG quality 30..95")
+        if not 1 <= exposure <= 2000000:
+            return _err("Live exposure must be 1..2000000 microseconds")
+        config = (max_width, max_height, exposure, gain)
+        if not self.video_running or self.live_config != config:
+            self.stop_video()
+            width, height = int(self.info["MaxWidth"]), int(self.info["MaxHeight"])
+            ratio = max(width / max_width, height / max_height)
+            supported = [int(b) for b in self.info.get("SupportedBins", [1]) if int(b) > 0]
+            bins = max([b for b in supported if b <= ratio] or [1])
+            self.cam.set_roi_format(width=width // bins // 8 * 8,
+                                    height=height // bins // 2 * 2,
+                                    bins=bins, image_type=asi.ASI_IMG_RAW8)
+            self.cam.set_roi_start_position(0, 0)
+            self.cam.set_control_value(asi.ASI_EXPOSURE, exposure)
+            self.cam.set_control_value(asi.ASI_GAIN, gain)
+            self.cam.start_video_capture()
+            self.video_running = True
+            self.live_config = config
+        self.live_owner = conn
+        frame = self.cam.capture_video_frame(timeout=2 * exposure // 1000 + 1500)
+        height, width = frame.shape[:2]
+        scale = min(max_width / width, max_height / height, 1.0)
+        if scale < 1:
+            frame = cv2.resize(frame, (max(1, round(width*scale)), max(1, round(height*scale))),
+                               interpolation=cv2.INTER_AREA)
+        ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if not ok:
+            raise RuntimeError("JPEG encoding failed")
+        payload = jpeg.tobytes()
+        header = _ok(cmd="live_frame", pixfmt="jpeg", nbytes=len(payload),
+                     w=int(frame.shape[1]), h=int(frame.shape[0]),
+                     timestamp=datetime.now().astimezone().isoformat(),
+                     exposure_us=exposure, gain=gain)
+        conn.sendall((json.dumps(header) + "\n").encode("utf-8"))
+        conn.sendall(payload)
+        return None
 
     def status(self):
         log("status(): called")
@@ -162,7 +250,9 @@ class ASIBridge:
             max_height=self.info.get("MaxHeight"),
             exposure_us=int(exp),
             gain=int(gain),
-            state=self.state,
+            state=dict(self.state),
+            live_active=self.video_running,
+            protocol_version=1,
         )
         log(f"status(): returning connected=True exposure_us={int(exp)} gain={int(gain)}")
         return resp
@@ -172,6 +262,7 @@ class ASIBridge:
             log("capture(): cam is None, calling init_camera()")
             self.init_camera()
 
+        self.apply_settings(exposure_us=self.state["exposure_us"], gain=self.state["gain"])
         count = int(count if count is not None else self.state["count"])
         fmt = (fmt if fmt is not None else self.state["format"]).lower()
         if fmt == "jpg":
@@ -190,8 +281,7 @@ class ASIBridge:
         saved = []
         t0 = time.time()
 
-        W = int(self.info["MaxWidth"])
-        H = int(self.info["MaxHeight"])
+        W, H, _, _ = self.cam.get_roi_format()
         log(f"capture(): expected frame shape H={H} W={W}")
 
         for i in range(1, count + 1):
@@ -229,6 +319,7 @@ class ASIBridge:
         log(f"capture_stream(): requested exposure_us={exp} gain={gain}")
         self.apply_settings(exposure_us=exp, gain=gain)
 
+        started = datetime.now().astimezone().isoformat()
         log("capture_stream(): grabbing frame")
         image_data = self.cam.capture()
 
@@ -249,7 +340,7 @@ class ASIBridge:
             payload = bytes(image_data)
             log("capture_stream(): capture() returned bytes-like object")
         elif hasattr(image_data, "tobytes"):
-            payload = image_data.tobytes(order="C")
+            payload = np.asarray(image_data, dtype="<u2").tobytes(order="C")
             log(f"capture_stream(): capture() returned array-like object type={type(image_data)}")
         else:
             return _err(f"Unexpected capture() return type: {type(image_data)}")
@@ -266,6 +357,9 @@ class ASIBridge:
         header = {
             "ok": True,
             "cmd": "capture_stream",
+            "capture_started": started,
+            "capture_finished": datetime.now().astimezone().isoformat(),
+            "camera_name": self.info.get("Name"),
             "w": W,
             "h": H,
             "pixfmt": "raw16_le",
@@ -284,6 +378,13 @@ class ASIBridge:
     def handle_request(self, req: dict, conn: socket.socket):
         cmd = (req.get("cmd") or "").strip().lower()
         log(f"handle_request(): cmd={cmd} req={req}")
+
+        if cmd == "live_frame":
+            return self.live_frame(req, conn)
+
+        if cmd == "live_stop":
+            self.release_live(conn)
+            return _ok(cmd="live_stop")
 
         if not cmd:
             return _err("Missing cmd")
@@ -353,6 +454,7 @@ def client_thread(bridge: ASIBridge, conn: socket.socket, addr):
 
     try:
         while True:
+            conn.settimeout(10 if bridge.live_owner is conn else None)
             data = conn.recv(4096)
             if not data:
                 log(f"Client {addr} closed connection")
@@ -377,8 +479,25 @@ def client_thread(bridge: ASIBridge, conn: socket.socket, addr):
                     conn.sendall((json.dumps(resp) + "\n").encode("utf-8"))
                     continue
 
-                with bridge.lock:
-                    resp = bridge.handle_request(req, conn)
+                if not isinstance(req, dict):
+                    conn.sendall((json.dumps(_err("Request must be an object")) + "\n").encode("utf-8"))
+                    continue
+                try:
+                    if req.get("cmd", "").lower() == "live_frame":
+                        if not bridge.lock.acquire(blocking=False):
+                            resp = _ok(cmd="live_frame", busy=True)
+                        else:
+                            try:
+                                resp = bridge.handle_request(req, conn)
+                            finally:
+                                bridge.lock.release()
+                    else:
+                        with bridge.lock:
+                            resp = bridge.handle_request(req, conn)
+                except (BrokenPipeError, ConnectionResetError, socket.timeout):
+                    raise
+                except Exception as e:
+                    resp = _err(str(e))
 
                 if resp is not None:
                     log(f"TX {addr}: {resp}")
@@ -387,6 +506,11 @@ def client_thread(bridge: ASIBridge, conn: socket.socket, addr):
     except Exception as e:
         log(f"Client error {addr}: {e}")
     finally:
+        try:
+            with bridge.lock:
+                bridge.release_live(conn)
+        except Exception as e:
+            log(f"Live cleanup error: {e}")
         try:
             conn.close()
         except Exception:

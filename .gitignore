@@ -30,3 +30,8 @@ frontend/captures/
 *_preview.png
 logs/
 
+
+# Python caches and local camera mappings
+__pycache__/
+*.pyc
+tools/cameras.json

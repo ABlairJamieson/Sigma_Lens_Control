@@ -262,3 +262,50 @@ Recommended static IPs:
 Control PC: `192.168.50.1`
 
 The Qt GUI can send capture commands to all nodes in parallel for near-simultaneous acquisition.
+
+# Live view and capture metadata (protocol version 1)
+
+The Qt GUI opens a separate connection on the existing camera port for live view.
+A pull protocol keeps at most one JPEG frame in flight, avoiding a growing video
+queue on slower networks. Default GUI quality is JPEG 80 with a 1280×720 bounding
+box and up to 5 fps. Long exposures, USB bandwidth, and BeagleY CPU limit actual fps.
+The ASI6200MM preview is grayscale. Binning retains approximately the full field of
+view (only alignment pixels may be trimmed), then OpenCV resizes to the requested
+bounding box. Fullscreen requests the display resolution, capped at 3840×2160;
+letterboxing preserves the camera's aspect ratio.
+
+Request a single live frame:
+
+```json
+{"cmd":"live_frame","max_width":1280,"max_height":720,"jpeg_quality":80,"exposure_us":50000,"gain":50}
+```
+
+The response is one JSON line with `ok`, `cmd:"live_frame"`, `pixfmt:"jpeg"`,
+`nbytes`, `w`, `h`, `timestamp`, `exposure_us`, and `gain`, followed by exactly
+`nbytes` JPEG bytes. Request the next frame after consuming that payload. If a
+still capture owns the SDK lock, the service instead returns
+`{"ok":true,"cmd":"live_frame","busy":true}` without a payload; retry later.
+Only one connection owns live mode. Close it, or send `{"cmd":"live_stop"}`, to
+release video and restore still settings. An idle live connection expires after
+10 seconds. Still and video access are serialized by the existing camera lock.
+
+Still commands stop video, restore unbinned full-sensor RAW16, and apply/confirm the
+requested exposure and gain. Live mode resumes when its next frame is requested.
+`capture_stream` keeps its existing JSON+RAW16 framing and adds camera model and
+capture timestamps. The GUI and `tools/capture_camera.py` save local TIFFs and JSON
+sidecars; these are distinct from the legacy `capture` command, which saves files
+on the BeagleY.
+
+Deploy this updated file on **each** BeagleY and restart the existing service:
+
+```bash
+# On each camera node, in its Sigma_Lens_Control checkout:
+git pull --ff-only
+sudo systemctl restart asi-bridge.service
+sudo systemctl status asi-bridge.service
+```
+
+No extra port, Python package, or service is required beyond the existing NumPy,
+OpenCV, zwoasi, and ASI SDK dependencies. The SDK video API and ROI alignment follow
+[python-zwoasi's camera interface](https://github.com/python-zwoasi/python-zwoasi/blob/master/zwoasi/__init__.py).
+Hardware throughput and binning support must be checked on the deployed camera.

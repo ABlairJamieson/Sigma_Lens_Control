@@ -1,12 +1,22 @@
 #include "../include/LensClient.h"
 
 #include <QMessageBox>
+#include <QTimer>
 
 LensClient::LensClient(QObject* parent)
   : QObject(parent),
     mSerial(new QSerialPort(this)),
     mSock(new QTcpSocket(this))
 {
+  mTelemetryAge.start();
+  auto telemetryWatchdog = new QTimer(this);
+  connect(telemetryWatchdog, &QTimer::timeout, this, [this] {
+    if (isConnected() && mTelemetryAge.elapsed() >= 5000) {
+      sendLine("ST"); // Recover telemetry if firmware heartbeats are quiet.
+      mTelemetryAge.restart();
+    }
+  });
+  telemetryWatchdog->start(1000);
   connect(mSerial, &QSerialPort::readyRead, this, &LensClient::onReadyRead);
   connect(mSock,   &QTcpSocket::readyRead, this, &LensClient::onReadyRead);
 
@@ -55,6 +65,7 @@ bool LensClient::connectTcp(const QString& host, quint16 port)
     return false;
 
   mIo = mSock;
+  mTelemetryAge.restart();
   emit connectedChanged(true, connectionLabel());
   emit statusMessage(QString("Lens connected (TCP) %1:%2").arg(host).arg(port));
   return true;
@@ -76,6 +87,7 @@ bool LensClient::connectSerial(const QString& portName)
     return false;
 
   mIo = mSerial;
+  mTelemetryAge.restart();
   emit connectedChanged(true, connectionLabel());
   emit statusMessage("Lens connected (Serial) " + portName);
   return true;
@@ -140,6 +152,8 @@ void LensClient::parseLineToKv(const QString& line)
     }
   }
 
+  if ((kv.contains("ID") && kv.contains("S")) || kv.contains("T") || kv.contains("H") ||
+      kv.contains("Bx") || kv.contains("Gx") || kv.contains("Ax")) mTelemetryAge.restart();
   mLastKv = kv;
   emit telemetryUpdated(mLastKv);
 }
