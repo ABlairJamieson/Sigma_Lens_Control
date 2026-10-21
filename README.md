@@ -1,5 +1,11 @@
 # Sigma_Lens_Control
 
+For the **Radxa CM5 custom carrier**, use the separate terminal checklist
+[cm5_setup/readme.txt](cm5_setup/readme.txt), installer
+[cm5_setup/install.py](cm5_setup/install.py), and NetworkManager helper
+[cm5_setup/network.sh](cm5_setup/network.sh). The BeagleY instructions below
+and `tools/provision_beagley.sh` are a different setup; do not apply them to CM5.
+
 Control software for the Sigma 15mm Art lens (Sony E-mount protocol) and ASI 6200 camera.
 
 ---
@@ -55,7 +61,49 @@ Example IP scheme:
 
 ---
 
-## 1. Configure Beagley Ethernet
+## 1. Provision a BeagleY automatically
+
+The repository includes an idempotent provisioning script:
+
+```bash
+chmod +x tools/provision_beagley.sh
+sudo tools/provision_beagley.sh --board-number 2
+```
+
+Use `--board-number 2` through `--board-number 7` for the six additional
+boards. The script assigns hostname `pchN` and `eth0` address
+`192.168.50.(N+1)/24`. It installs the Debian dependencies, creates the
+`.venv`, installs `zwoasi`, installs the ASI udev rule, configures both
+systemd bridges, and validates the result. It does not modify `usb0`.
+
+Run a preview first with:
+
+```bash
+tools/provision_beagley.sh --board-number 2 --dry-run
+```
+
+### ASI SDK staging
+
+For now, keep the downloaded SDK on the provisioning PC at:
+
+```text
+C:\Users\ablai\Downloads\ASI_Camera_SDK-linux\ASI_Camera_SDK
+```
+
+The extracted directory must contain
+`ASI_linux_mac_SDK/lib/armv8/libASICamera2.so` and
+`ASI_linux_mac_SDK/lib/asi.rules`. Copy that directory to the BeagleY at
+`~/Downloads/ASI_Camera_SDK-linux/ASI_Camera_SDK`, or pass its actual path
+with `--sdk-source`. The script installs it at
+`/opt/asi/ASI_linux_mac_SDK` and retains the versioned directory
+`/opt/asi/ASI_linux_mac_SDK_V1.41`.
+
+The script assumes the repository is at
+`/home/photogrammetry/Sigma_Lens_Control` on each BeagleY. If that path
+differs, adjust the `WorkingDirectory` and `ExecStart` paths in the service
+templates before provisioning.
+
+## 2. Configure Beagley Ethernet manually
 
 Create:
 

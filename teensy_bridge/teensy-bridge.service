@@ -1,12 +1,13 @@
 [Unit]
 Description=Teensy TCP Bridge
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=photogrammetry
 WorkingDirectory=/home/photogrammetry/Sigma_Lens_Control/teensy_bridge
-ExecStart=/usr/bin/python3 /home/photogrammetry/Sigma_Lens_Control/teensy_bridge/teensy_bridge.py
+ExecStart=/home/photogrammetry/Sigma_Lens_Control/.venv/bin/python /home/photogrammetry/Sigma_Lens_Control/teensy_bridge/teensy_bridge.py
 Restart=always
 RestartSec=3
 

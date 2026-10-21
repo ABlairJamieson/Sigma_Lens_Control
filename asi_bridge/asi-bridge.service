@@ -1,12 +1,13 @@
 [Unit]
 Description=ASI Camera TCP Bridge
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=photogrammetry
 WorkingDirectory=/home/photogrammetry/Sigma_Lens_Control/asi_bridge
-ExecStart=/usr/bin/python3 /home/photogrammetry/Sigma_Lens_Control/asi_bridge/asi_bridge.py
+ExecStart=/home/photogrammetry/Sigma_Lens_Control/.venv/bin/python /home/photogrammetry/Sigma_Lens_Control/asi_bridge/asi_bridge.py
 Restart=always
 RestartSec=3
 
