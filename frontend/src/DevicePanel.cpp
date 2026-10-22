@@ -7,6 +7,12 @@
 #include <cmath>
 #include <algorithm>
 #include <QJsonObject>
+#include <QJsonDocument>
+#include <QGroupBox>
+#include <QVBoxLayout>
+#include <QPlainTextEdit>
+#include <QLabel>
+#include <QToolButton>
 
 
 static QString exposureToFriendlyString(double ms)
@@ -43,6 +49,63 @@ DevicePanel::DevicePanel(QWidget* parent)
     mCam(new CameraClient(this))
 {
   ui->setupUi(this);
+  auto diagnosticsBox = new QGroupBox("ASI camera diagnostics", this);
+  auto diagnosticsLayout = new QVBoxLayout(diagnosticsBox);
+  mCameraTemperature = new QLabel("Camera disconnected", diagnosticsBox);
+  mCameraTemperature->setObjectName("asiTemperature");
+  auto staleTimer = new QTimer(this);
+  staleTimer->start(5000);
+  connect(staleTimer, &QTimer::timeout, this, [this] {
+    if (cameraConnected() && !mCameraDiagnostics.isEmpty() &&
+        QDateTime::currentMSecsSinceEpoch() - mCameraDiagnosticsReceived > 15000 &&
+        !mCameraTemperature->text().startsWith("STALE"))
+      mCameraTemperature->setText("STALE — no ASI diagnostics for 15 seconds\n" + mCameraTemperature->text());
+  });
+  mCameraTemperature->setWordWrap(true);
+  diagnosticsLayout->addWidget(mCameraTemperature);
+  mCameraDetails = new QPlainTextEdit(diagnosticsBox);
+  mCameraDetails->setObjectName("asiDiagnostics");
+  mCameraDetails->setReadOnly(true);
+  mCameraDetails->setMaximumHeight(125);
+  auto detailsToggle = new QToolButton(diagnosticsBox);
+  detailsToggle->setText("Diagnostic details");
+  detailsToggle->setCheckable(true);
+  mCameraDetails->hide();
+  connect(detailsToggle, &QToolButton::toggled, mCameraDetails, &QWidget::setVisible);
+  diagnosticsLayout->addWidget(detailsToggle);
+  diagnosticsLayout->addWidget(mCameraDetails);
+  ui->verticalLayout->insertWidget(2, diagnosticsBox);
+  connect(mCam, &CameraClient::diagnosticsReceived, this, [this](const QJsonObject& d) {
+    mCameraDiagnostics = d;
+    mCameraDiagnosticsReceived = QDateTime::currentMSecsSinceEpoch();
+    auto number = [&d](const QString& key, const QString& unit) {
+      return d.value(key).isDouble() ? QString::number(d.value(key).toDouble(), 'f', 1) + unit : QString("unavailable");
+    };
+    mCameraTemperature->setText(QString("Sensor: %1 | FPGA: %2\nCooler: %3 | Target: %4 | USB: %5\nUpdated: %6")
+      .arg(number("sensor_temperature_c", " °C"))
+      .arg(d.value("fpga_temperature_available").toBool() ? "see raw control (units unverified)" : "not exposed by SDK")
+      .arg(number("cooler_power_percent", " %")).arg(number("target_temperature_c", " °C"))
+      .arg(d.value("usb3_host").isBool() ? (d.value("usb3_host").toBool() ? "USB 3" : "USB 2") : "unavailable")
+      .arg(QDateTime::currentDateTime().toString(Qt::ISODateWithMs)));
+    QStringList details;
+    details << "Camera: " + d.value("camera_name").toString("unavailable")
+            << "SDK: " + d.value("sdk_version").toString("unavailable")
+            << "Dropped video frames: " + number("dropped_frames", "")
+            << "Successful / failed captures since service start: " + number("capture_successes", "") + " / " + number("capture_failures", "")
+            << "Cooler enabled: " + number("cooler_on", " (0=off, 1=on)")
+            << "Fan setting: " + number("fan_speed_raw", " (raw SDK setting)")
+            << "Dew heater: " + number("anti_dew_heater", " (raw SDK setting)");
+    const auto errors = d.value("errors").toObject();
+    for (auto it = errors.begin(); it != errors.end(); ++it) details << "Read error — " + it.key() + ": " + it.value().toString();
+    if (d.value("last_capture_error").isObject()) details << "Last capture error: " + QString::fromUtf8(QJsonDocument(d.value("last_capture_error").toObject()).toJson(QJsonDocument::Compact));
+    const auto controls = d.value("controls").toObject();
+    for (auto it = controls.begin(); it != controls.end(); ++it) {
+      const auto control = it.value().toObject();
+      details << it.key() + ": " + QString::number(control.value("value").toDouble()) + " — " + control.value("description").toString();
+    }
+    mCameraDetails->setPlainText(details.join('\n'));
+    emit cameraDiagnostics(mSlotIndex1, mConnectedCameraEndpoint, d);
+  });
 
   QSettings settings("HyperK", "SigmaControl");
   ui->edit_host->setText(settings.value("host", "192.168.137.175").toString());
@@ -503,7 +566,7 @@ void DevicePanel::capture()
   const bool hasLensMeta = (mLensBackendState == "RegularMessaging");
   QJsonObject requested{{"focus_raw", focusRaw}, {"aperture_raw", apertureRaw}, {"f_number", fNumber}, {"exposure_us", exposureUs}, {"gain", s.gain}};
   mCam->setCaptureContext(QJsonObject{{"slot", mSlotIndex1}, {"camera_endpoint", mConnectedCameraEndpoint},
-    {"lens_endpoint", mConnectedLensEndpoint}, {"firmware_version", mTelemetrySnapshot.value("FW").toString("unknown")}, {"requested", requested}, {"lens_telemetry", mTelemetrySnapshot},
+    {"camera_diagnostics", mCameraDiagnostics}, {"lens_endpoint", mConnectedLensEndpoint}, {"firmware_version", mTelemetrySnapshot.value("FW").toString("unknown")}, {"requested", requested}, {"lens_telemetry", mTelemetrySnapshot},
     {"telemetry_received_at", mTelemetryTimestamp}, {"requested_at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)}});
   mCam->captureStream(exposureUs, s.gain, outdir, prefix, format,
                       hasLensMeta, focusRaw, apertureRaw, fNumber);
@@ -635,6 +698,13 @@ void DevicePanel::onLensStatusMessage(const QString& msg)
 void DevicePanel::onCameraConnectedChanged(bool connected)
 {
   mConnectedCameraEndpoint = connected ? cameraEndpoint() : QString();
+  if (!connected) {
+    mCameraDiagnostics = {};
+    mCameraTemperature->setText("Camera disconnected — previous readings cleared");
+    mCameraDetails->clear();
+  } else {
+    mCameraTemperature->setText("Waiting for ASI diagnostics (older bridges may not support them)");
+  }
   setCameraUiConnected(connected);
   setOverallStatusText();
 

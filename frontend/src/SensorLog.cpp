@@ -1,5 +1,6 @@
 #include "SensorLog.h"
 #include <QDir>
+#include <QJsonDocument>
 #include <QFile>
 #include <QFileInfo>
 #include <functional>
@@ -118,7 +119,11 @@ void SensorLog::maintain(const QDateTime& now) {
   if (mArchive.isRunning()) return;
   if (!QDir().mkpath(mDirectory)) { emit loggingError("Cannot create sensor log directory: " + mDirectory); return; }
   const auto week = now.date().addDays(1-now.date().dayOfWeek());
-  mArchive.setFuture(QtConcurrent::run(archiveOldLogs, mDirectory, week));
+  mArchive.setFuture(QtConcurrent::run([directory=mDirectory, week] {
+    auto error = archiveOldLogs(directory, week);
+    if (!error.isEmpty()) return error;
+    return archiveOldLogs(directory + "/asi", week);
+  }));
 }
 void SensorLog::remember(const SensorSample& sample) {
   // Plot one representative heartbeat per 10-second bin to bound history memory.
@@ -191,4 +196,27 @@ void SensorLog::record(int slot, const QString& endpoint, const QMap<QString, QS
   if (stream.status() != QTextStream::Ok || !file.flush()) { emit loggingError("Sensor log write failed: " + file.errorString()); return; }
   remember(sample);
   emit readingSaved(now); emit changed();
+}
+
+void SensorLog::recordCameraDiagnostics(int slot, const QString& endpoint, const QJsonObject& diagnostics) {
+  if (slot < 1 || slot > 8) return;
+  const auto now = QDateTime::currentDateTime();
+  const auto directory = mDirectory + "/asi";
+  if (!QDir().mkpath(directory)) { emit loggingError("Cannot create ASI diagnostics directory: " + directory); return; }
+  const auto path = directory + "/" + weeklyName(now.date());
+  QLockFile lock(path + ".lock");
+  if (!lock.tryLock(100)) { emit loggingError("Cannot lock ASI diagnostics log: " + path); return; }
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) { emit loggingError("Cannot open ASI log: " + file.errorString()); return; }
+  auto quote = [](QString value) { value.replace('"', "\"\""); return '"' + value + '"'; };
+  QTextStream stream(&file);
+  if (!file.size()) stream << "timestamp,slot,endpoint,sensor_temperature_c,fpga_temperature_c,cooler_power_percent,target_temperature_c,diagnostics_json\n";
+  stream << now.toString(Qt::ISODateWithMs) << ',' << slot << ',' << quote(endpoint);
+  for (const auto& key : {"sensor_temperature_c", "fpga_temperature_c", "cooler_power_percent", "target_temperature_c"}) {
+    stream << ',';
+    if (diagnostics.value(key).isDouble()) stream << QString::number(diagnostics.value(key).toDouble(), 'g', 12);
+  }
+  stream << ',' << quote(QString::fromUtf8(QJsonDocument(diagnostics).toJson(QJsonDocument::Compact))) << '\n';
+  stream.flush();
+  if (stream.status() != QTextStream::Ok || !file.flush()) emit loggingError("ASI diagnostics log write failed: " + file.errorString());
 }

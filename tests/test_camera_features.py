@@ -117,6 +117,34 @@ class Server:
 
 
 class CameraFeatures(unittest.TestCase):
+    def test_diagnostics_partial_controls_and_temperature_units(self):
+        b = bridge()
+        b.controls = {"Temperature": {"ControlType": 8},
+                      "CoolPowerPerc": {"ControlType": 15},
+                      "Broken": {"ControlType": 99}}
+        b.cam.controls.update({8: -125, 15: 47})
+        SDK.ASI_COOLER_POWER_PERC = 15
+        d = b.diagnostics()
+        self.assertEqual(d["sensor_temperature_c"], -12.5)
+        self.assertEqual(d["cooler_power_percent"], 47)
+        self.assertIsNone(d["fpga_temperature_c"])
+        self.assertFalse(d["fpga_temperature_available"])
+        self.assertIn("Broken", d["errors"])
+        self.assertEqual(d["controls"]["Temperature"]["value"], -125)
+        self.assertEqual(b.status()["cmd"], "status")
+
+    def test_capture_error_preserves_sdk_diagnostics(self):
+        b = bridge()
+        class CaptureFailure(Exception):
+            exposure_status = 3
+        def fail():
+            raise CaptureFailure("Could not capture image")
+        b.cam.capture = fail
+        response = b.handle_request({"cmd": "capture_stream"}, MemoryConnection())
+        self.assertFalse(response["ok"])
+        self.assertEqual(response["diagnostics"]["capture_failures"], 1)
+        self.assertEqual(response["diagnostics"]["last_capture_error"]["exposure_status"], 3)
+
     def test_live_to_still_and_back(self):
         camera = bridge()
         live = MemoryConnection()

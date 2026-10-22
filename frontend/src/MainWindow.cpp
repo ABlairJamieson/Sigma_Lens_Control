@@ -16,6 +16,7 @@
 #include <QDateTime>
 #include <QDir>
 #include "EnvironmentHistory.h"
+#include "SensorLog.h"
 #include "LiveViewClient.h"
 #include <QCheckBox>
 #include <QApplication>
@@ -154,6 +155,7 @@ void MainWindow::initPanels()
       if (busy) mLive->stop();
       else if (mLiveToggle->isChecked()) startLive();
     });
+    connect(p, &DevicePanel::cameraDiagnostics, mEnvironmentHistory->log(), &SensorLog::recordCameraDiagnostics);
     connect(p, &DevicePanel::environmentReading, mEnvironmentHistory, &EnvironmentHistory::record);
     connect(p, &DevicePanel::lensLedStateChanged,   this, &MainWindow::onLensLedChanged);
     connect(p, &DevicePanel::cameraLedStateChanged, this, &MainWindow::onCameraLedChanged);

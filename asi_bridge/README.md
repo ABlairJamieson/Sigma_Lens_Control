@@ -309,3 +309,36 @@ No extra port, Python package, or service is required beyond the existing NumPy,
 OpenCV, zwoasi, and ASI SDK dependencies. The SDK video API and ROI alignment follow
 [python-zwoasi's camera interface](https://github.com/python-zwoasi/python-zwoasi/blob/master/zwoasi/__init__.py).
 Hardware throughput and binning support must be checked on the deployed camera.
+
+
+### Read-only camera diagnostics
+
+`status` now includes `cmd: "status"` and a `diagnostics` object. The frontend
+polls every five seconds while the camera is connected, independently of the
+lens connection or selected tab; polling pauses during still capture. SDK reads
+share the acquisition lock. Diagnostics never enable cooling, fans, heaters or
+change acquisition settings.
+
+On the tested ASI6200MM Pro / SDK 1.41, `Temperature` explicitly describes the
+sensor temperature. Its raw SDK value is divided by ten for
+`sensor_temperature_c`. No separate FPGA temperature control is advertised:
+`fpga_temperature_c` is null and the GUI says "not exposed by SDK". Do not use
+the sensor or housing temperature as an FPGA measurement. Other advertised
+controls are returned with raw values, descriptions and auto/writable flags;
+unsupported or failed readings stay unavailable and have individual errors.
+
+Diagnostics include USB3 host/camera capability, cooler power/target/on state,
+fan setting, dew heater, SDK version, dropped video frames, and stream capture
+success/failure counters since service start. SDK capture errors retain their
+numeric error code or exposure status. Successful stream headers also contain
+a diagnostics snapshot, preserved in GUI image metadata.
+
+The GUI displays receipt time using the DAQ clock, marks readings stale after
+15 seconds without a new sample, and clears them on disconnect. The camera's
+own timestamp remains in the logged diagnostics, since remote clocks can differ.
+Logs are separate from housing telemetry:
+`~/.local/share/SigmaControl/environment/asi/week_YYYY-MM-DD.csv`.
+They include the local receipt timestamp, slot, endpoint, key temperatures and
+cooler values, and the complete diagnostics JSON as a quoted CSV column.
+Completed weeks use the same verified gzip archival process as housing logs.
+Existing bridge versions remain compatible but cannot supply these diagnostics.

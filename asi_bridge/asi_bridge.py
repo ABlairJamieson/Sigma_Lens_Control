@@ -6,6 +6,7 @@ import time
 import socket
 import select
 import threading
+import ctypes
 from datetime import datetime
 
 import numpy as np
@@ -67,6 +68,9 @@ class ASIBridge:
         self.cam = None
         self.info = None
         self.controls = None
+        self.capture_successes = 0
+        self.capture_failures = 0
+        self.last_capture_error = None
         self.lock = threading.Lock()
         self.live_owner = None
         self.live_config = None
@@ -228,12 +232,64 @@ class ASIBridge:
         conn.sendall(payload)
         return None
 
+    def diagnostics(self):
+        """Read advertised controls only; never change cooling or acquisition settings."""
+        result = {"sampled_at": datetime.now().astimezone().isoformat(),
+                  "sensor_temperature_c": None, "fpga_temperature_c": None,
+                  "fpga_temperature_available": False, "controls": {}, "errors": {}}
+        if self.cam is None:
+            result["errors"]["camera"] = "Camera not initialized"
+            return result
+        for name, caps in (self.controls or {}).items():
+            try:
+                raw, auto = self.cam.get_control_value(caps["ControlType"])
+                result["controls"][name] = {"value": int(raw), "auto": bool(auto),
+                    "description": str(caps.get("Description", "")),
+                    "writable": bool(caps.get("IsWritable", False))}
+                if caps["ControlType"] == getattr(asi, "ASI_TEMPERATURE", 8):
+                    result["sensor_temperature_c"] = raw / 10.0
+                # Do not infer an FPGA reading from the standard camera temperature.
+                if "fpga" in name.lower() and "temp" in name.lower():
+                    result["fpga_temperature_available"] = True
+                    result["fpga_temperature_control"] = name
+            except Exception as e:
+                result["errors"][name] = str(e)
+        for key, constant in (("cooler_power_percent", "ASI_COOLER_POWER_PERC"),
+                ("target_temperature_c", "ASI_TARGET_TEMP"), ("cooler_on", "ASI_COOLER_ON"),
+                ("fan_on", "ASI_FAN_ON"), ("anti_dew_heater", "ASI_ANTI_DEW_HEATER")):
+            control = getattr(asi, constant, None)
+            match = next((name for name, caps in (self.controls or {}).items()
+                          if control is not None and caps.get("ControlType") == control), None)
+            result[key] = result["controls"].get(match, {}).get("value")
+        try:
+            result["dropped_frames"] = int(self.cam.get_dropped_frames())
+        except Exception as e:
+            result["errors"]["dropped_frames"] = str(e)
+        try:
+            lib = ctypes.CDLL(self.sdk_path)
+            lib.ASIGetSDKVersion.restype = ctypes.c_char_p
+            result["sdk_version"] = lib.ASIGetSDKVersion().decode("ascii", "replace")
+        except Exception as e:
+            result["errors"]["sdk_version"] = str(e)
+        # Some python-zwoasi releases omit constants added in newer SDKs.
+        for key, name in (("anti_dew_heater", "AntiDewHeater"), ("fan_speed_raw", "FanSpeedAdjust")):
+            result[key] = result["controls"].get(name, {}).get("value")
+        result.update(capture_successes=self.capture_successes, capture_failures=self.capture_failures,
+                      last_capture_error=self.last_capture_error)
+        info = self.info or {}
+        result.update(camera_name=info.get("Name"), camera_id=info.get("CameraID"),
+                      usb3_host=bool(info["IsUSB3Host"]) if "IsUSB3Host" in info else None,
+                      usb3_camera=bool(info["IsUSB3Camera"]) if "IsUSB3Camera" in info else None,
+                      cooler_camera=bool(info["IsCoolerCam"]) if "IsCoolerCam" in info else None,
+                      live_active=self.video_running)
+        return result
+
     def status(self):
         log("status(): called")
 
         if self.cam is None:
             log("status(): cam is None -> connected=False")
-            return _ok(connected=False, sdk_path=self.sdk_path, state=self.state)
+            return _ok(cmd="status", connected=False, sdk_path=self.sdk_path, state=self.state, diagnostics=self.diagnostics())
 
         try:
             exp = self.cam.get_control_value(asi.ASI_EXPOSURE)[0]
@@ -244,7 +300,9 @@ class ASIBridge:
             gain = self.state["gain"]
 
         resp = _ok(
+            cmd="status",
             connected=True,
+            diagnostics=self.diagnostics(),
             camera_name=self.info.get("Name"),
             max_width=self.info.get("MaxWidth"),
             max_height=self.info.get("MaxHeight"),
@@ -354,9 +412,11 @@ class ASIBridge:
                 got=got_nbytes, expected=expected_nbytes, w=W, h=H, img_type=str(img_type)
             )
 
+        self.capture_successes += 1
         header = {
             "ok": True,
             "cmd": "capture_stream",
+            "diagnostics": self.diagnostics(),
             "capture_started": started,
             "capture_finished": datetime.now().astimezone().isoformat(),
             "camera_name": self.info.get("Name"),
@@ -418,8 +478,13 @@ class ASIBridge:
             try:
                 return self.capture_stream(req, conn)
             except Exception as e:
+                self.capture_failures += 1
+                self.last_capture_error = {"message": str(e), "type": type(e).__name__,
+                    "error_code": getattr(e, "error_code", None),
+                    "exposure_status": getattr(e, "exposure_status", None),
+                    "at": datetime.now().astimezone().isoformat()}
                 log(f"handle_request(): capture_stream failed: {e}")
-                return _err(f"Capture failed: {e}")
+                return _err(f"Capture failed: {e}", diagnostics=self.diagnostics())
 
         return _err(f"Unknown cmd: {cmd}")
 

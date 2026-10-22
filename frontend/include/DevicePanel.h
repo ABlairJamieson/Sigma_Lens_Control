@@ -16,6 +16,8 @@ QT_END_NAMESPACE
 
 class LensClient;
 class CameraClient;
+class QLabel;
+class QPlainTextEdit;
 
 class DevicePanel : public QWidget
 {
@@ -65,6 +67,7 @@ public slots:
   void requestCameraStatus();
 
 signals:
+  void cameraDiagnostics(int slot1, const QString& endpoint, const QJsonObject& diagnostics);
   void cameraCaptureBusy(int slot1, bool busy);
   void environmentReading(int slot1, const QString& endpoint, const QMap<QString, QString>& values);
   void lensLedStateChanged(int slot1, DevicePanel::LedState state);
@@ -144,7 +147,10 @@ private:
   // backend-reported lens FSM state: Off / Idle / LinkEstablishment / ...
   QString mLensBackendState;
   QString mConnectedLensEndpoint, mConnectedCameraEndpoint;
-  QJsonObject mTelemetrySnapshot;
+  QJsonObject mTelemetrySnapshot, mCameraDiagnostics;
+  qint64 mCameraDiagnosticsReceived = 0;
+  QLabel* mCameraTemperature = nullptr;
+  QPlainTextEdit* mCameraDetails = nullptr;
   QString mTelemetryTimestamp;
 
 };

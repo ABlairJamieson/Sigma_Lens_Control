@@ -204,6 +204,11 @@ int main(int argc, char** argv) {
               QTimer::singleShot(10, socket, [socket,jpeg] {
                 if (socket->state() == QAbstractSocket::ConnectedState) socket->write(jpeg.mid(50));
               });
+            } else if (command == "status") {
+              QJsonObject d{{"sampled_at", QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+                {"sensor_temperature_c",23.5},{"fpga_temperature_available",false},{"cooler_power_percent",0},
+                {"target_temperature_c",0},{"usb3_host",true},{"errors",QJsonObject{}}};
+              socket->write(QJsonDocument(QJsonObject{{"ok",true},{"cmd","status"},{"connected",true},{"diagnostics",d}}).toJson(QJsonDocument::Compact)+"\n");
             } else if (command == "capture_stream") {
               ++captures;
               QJsonObject header{{"ok",true},{"cmd","capture_stream"},{"pixfmt","raw16_le"},{"nbytes",64},{"w",8},{"h",4},
@@ -221,6 +226,21 @@ int main(int argc, char** argv) {
     panel->findChild<QSpinBox*>("spin_cameraPort")->setValue(camera.serverPort());
     panel->findChild<QLineEdit*>("edit_saveDir")->setText(temporary.path()+"/gui-captures");
     panel->findChild<QPushButton*>("btn_cameraConnect")->click(); events(30);
+    auto temperature = panel->findChild<QLabel*>("asiTemperature");
+    require(temperature && temperature->text().contains("23.5") && temperature->text().contains("not exposed"), "ASI temperature and unsupported FPGA shown independently of lens");
+    const auto asiLog = directory + "/asi/" + SensorLog::weeklyName(now.date());
+    require(QFile::exists(asiLog) && read(asiLog).contains("23.5"), "ASI diagnostics persist without lens connection");
+    const auto rowsBefore = read(asiLog).count('\n');
+    tabs->setCurrentIndex(1); events(5200);
+    require(read(asiLog).count('\n') > rowsBefore, "ASI diagnostics poll and log while another tab is selected");
+    tabs->setCurrentIndex(0);
+    const auto oldAsi = directory + "/asi/" + SensorLog::weeklyName(now.date().addDays(-14));
+    const QByteArray oldAsiContents("timestamp,diagnostics_json\nold,\"{}\"\n");
+    write(oldAsi, oldAsiContents);
+    auto diagnosticLog = window.findChild<SensorLog*>();
+    require(diagnosticLog, "diagnostic logger exists");
+    waitArchive(*diagnosticLog); diagnosticLog->maintain(); waitArchive(*diagnosticLog);
+    require(!QFile::exists(oldAsi) && unzip(oldAsi+".gz")==oldAsiContents, "old ASI weeks gzip with verified contents");
     auto toggle = window.findChild<QCheckBox*>("check_liveView");
     auto preview = window.findChild<QLabel*>("label_mainPreview");
     require(toggle && toggle->isEnabled(), "live toggle enabled for connected camera");
@@ -255,6 +275,7 @@ int main(int argc, char** argv) {
     window.grab().save(imagePath+"_gui.png");
     panel->findChild<QPushButton*>("btn_cameraDisconnect")->click(); events(30);
     require(!toggle->isEnabled(), "disconnect disables live view");
+    require(temperature->text().contains("disconnected"), "disconnect clears ASI temperature");
   }
   std::cout << "Weekly sensor archive and history tests passed\n";
 }

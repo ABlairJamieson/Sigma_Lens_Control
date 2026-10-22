@@ -33,6 +33,7 @@ public:
                      double fNumber = -1.0);
 
 signals:
+  void diagnosticsReceived(const QJsonObject& diagnostics);
   void busyChanged(bool busy);
   void connectedChanged(bool connected);
   void statusMessage(const QString& msg);
@@ -68,7 +69,8 @@ private:
   QByteArray mRxBuf;
 
   bool mBusy = false;
-  QTimer mCaptureDeadline;
+  QTimer mCaptureDeadline, mDiagnosticsTimer;
+  bool mStatusPending = false;
   QJsonObject mContext, mPendingContext, mCaptureHeader;
   void finishCapture();
   QTcpSocket* mSock = nullptr;

@@ -1,5 +1,6 @@
 #pragma once
 #include <QObject>
+#include <QJsonObject>
 #include <QDateTime>
 #include <QFutureWatcher>
 #include <QMap>
@@ -19,6 +20,7 @@ public:
   ~SensorLog();
   void record(int slot, const QString& endpoint, const QMap<QString, QString>& values,
               const QDateTime& now = QDateTime::currentDateTime());
+  void recordCameraDiagnostics(int slot, const QString& endpoint, const QJsonObject& diagnostics);
   void maintain(const QDateTime& now = QDateTime::currentDateTime());
   bool archiving() const { return mArchive.isRunning(); }
   const QVector<SensorSample>& samples() const { return mSamples; }

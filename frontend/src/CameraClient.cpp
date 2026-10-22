@@ -15,6 +15,8 @@ CameraClient::CameraClient(QObject* parent)
   : QObject(parent),
     mSock(new QTcpSocket(this))
 {
+  mDiagnosticsTimer.setInterval(5000);
+  connect(&mDiagnosticsTimer, &QTimer::timeout, this, &CameraClient::requestStatus);
   mCaptureDeadline.setSingleShot(true);
   connect(&mCaptureDeadline, &QTimer::timeout, this, [this] { emit statusMessage("Capture timed out"); disconnect(); });
   connect(mSock, &QTcpSocket::readyRead, this, &CameraClient::onReadyRead);
@@ -57,6 +59,9 @@ bool CameraClient::connectToEndpoint(const QString& endpoint)
   if (!mSock->waitForConnected(1500))
     return false;
 
+  mStatusPending = false;
+  mDiagnosticsTimer.start();
+  requestStatus();
   emit connectedChanged(true);
   emit statusMessage(QString("Camera connected %1:%2").arg(hp[0]).arg(port));
   return true;
@@ -64,6 +69,8 @@ bool CameraClient::connectToEndpoint(const QString& endpoint)
 
 void CameraClient::disconnect()
 {
+  mDiagnosticsTimer.stop();
+  mStatusPending = false;
   if (mSock && mSock->isOpen())
     mSock->close();
 
@@ -93,6 +100,8 @@ void CameraClient::sendJsonLine(const QJsonObject& obj)
 
 void CameraClient::requestStatus()
 {
+  if (!isConnected() || mBusy || mStatusPending) return;
+  mStatusPending = true;
   QJsonObject obj;
   obj["cmd"] = "status";
   sendJsonLine(obj);
@@ -151,6 +160,8 @@ void CameraClient::onErrorOccurred(QAbstractSocket::SocketError)
 
 void CameraClient::onDisconnected()
 {
+  mDiagnosticsTimer.stop();
+  mStatusPending = false;
   emit statusMessage("Camera TCP disconnected");
   disconnect();
 }
@@ -325,8 +336,13 @@ void CameraClient::onReadyRead()
     const QString cmd = obj.value("cmd").toString();
     const bool ok = obj.value("ok").toBool(false);
 
+    if (cmd == "status" || obj.contains("connected")) mStatusPending = false;
+    if (obj.value("diagnostics").isObject())
+      emit diagnosticsReceived(obj.value("diagnostics").toObject());
+
     if (!ok)
     {
+      mStatusPending = false;
       emit statusMessage("Camera error: " + obj.value("error").toString());
       finishCapture();
       continue;
@@ -366,7 +382,7 @@ void CameraClient::onReadyRead()
       continue;
     }
 
-    // status or other OK replies
-    emit statusMessage("Camera OK response");
+    // Periodic status updates go to the diagnostics panel without flooding the log.
+    if (cmd != "status" && !obj.contains("connected")) emit statusMessage("Camera OK response");
   }
 }
