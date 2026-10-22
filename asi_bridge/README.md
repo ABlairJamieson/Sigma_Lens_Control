@@ -342,3 +342,22 @@ They include the local receipt timestamp, slot, endpoint, key temperatures and
 cooler values, and the complete diagnostics JSON as a quoted CSV column.
 Completed weeks use the same verified gzip archival process as housing logs.
 Existing bridge versions remain compatible but cannot supply these diagnostics.
+
+
+Live view allows an 8-second startup/readout margin (plus exposure allowance)
+and 3 seconds for later frames. SDK timeout code 11 returns a retryable busy
+response so the GUI preserves its last frame and retries on the same connection.
+A successful frame clears the timeout count. Three consecutive timeouts stop the
+stream and report an error; other SDK errors fail immediately. The frontend
+uses a 20-second per-request deadline. These changes do not force USB3 negotiation.
+
+
+Camera initialization is retried every five seconds after a startup failure,
+without requiring status polling, a capture request, or a service restart.
+Retries use the same SDK lock as capture/live view, and partially initialized
+camera handles are closed on failure. This addresses cameras appearing late;
+it does not force USB3 negotiation or diagnose a failed exposure as unplugging.
+For CM5 buffer/permission setup and offline verification, use
+`cm5_setup/camera_setup.py --apply` and `--check` as documented in
+`cm5_setup/readme.txt`. Never install the temporary USB controller experiments
+as part of normal provisioning.

@@ -38,3 +38,35 @@ RADXA CM5 CUSTOM CARRIER - NOT BEAGLEY (tech: verify flash notes)
    sudo bash cm5_setup/network.sh camera pch2 ASSIGNED_IP/PREFIX
    Disconnects SSH; removes university gateway/DNS. Use new IP afterward.
    Return to university: sudo bash cm5_setup/network.sh university
+
+CONFIRMED CAMERA SETTINGS (applied by install.py)
+- Kernel arguments: swiotlb=131072 usbcore.usbfs_memory_mb=200
+  These are DIFFERENT USB memory limits. Default USBFS 16 MB prevented capture.
+- Explicit ASI permissions for photogrammetry and camera autosuspend disabled.
+- Existing boot arguments/overlays preserved; changed files get one-time backups.
+- Reboot is required. Check afterward:
+    sudo python3 cm5_setup/camera_setup.py --check
+  The check reports effective buffer values, service-user USB access, negotiated
+  USB speed, SDK/Python loading, service states and clock synchronization.
+  No camera is opened and no exposure is started. USB2 is a warning, not proof
+  of a broken camera. No attached camera is permitted during initial setup.
+
+ALREADY-INSTALLED / OFFLINE CM5
+No apt, pip, SDK copying or network changes needed to apply the camera settings:
+    sudo python3 cm5_setup/camera_setup.py --apply
+    sudo reboot
+    sudo python3 cm5_setup/camera_setup.py --check
+Correct the clock explicitly from the DAQ/laptop's current UTC if offline:
+    sudo python3 cm5_setup/camera_setup.py --set-time 'YYYY-MM-DD HH:MM:SS'
+NTP requires an accessible time source; the isolated camera link provides none
+by itself. fake-hwclock preserves an approximate time, not synchronization.
+
+USB3 STARTUP INVESTIGATION
+The memory and permission fixes enable capture but do not force USB3 speed.
+A known-good camera repeatedly negotiated USB3 when the CM5 was powered first
+and camera 12 V enabled afterward, with USB already connected. Simultaneous
+power-up sometimes negotiated USB2. No hardware sequencing fix is validated.
+Do not provision experimental controller resets, sigma-usb-latebind overlays,
+or ASI UsbHubReset pulses. None reliably recovered SuperSpeed in these tests.
+The bridge retries failed initial camera discovery every five seconds without
+needing a client connection; retries never reset USB or change camera power.

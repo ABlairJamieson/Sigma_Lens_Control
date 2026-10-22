@@ -231,7 +231,7 @@ int main(int argc, char** argv) {
     const auto asiLog = directory + "/asi/" + SensorLog::weeklyName(now.date());
     require(QFile::exists(asiLog) && read(asiLog).contains("23.5"), "ASI diagnostics persist without lens connection");
     const auto rowsBefore = read(asiLog).count('\n');
-    tabs->setCurrentIndex(1); events(5200);
+    tabs->setCurrentIndex(1); events(6000);
     require(read(asiLog).count('\n') > rowsBefore, "ASI diagnostics poll and log while another tab is selected");
     tabs->setCurrentIndex(0);
     const auto oldAsi = directory + "/asi/" + SensorLog::weeklyName(now.date().addDays(-14));

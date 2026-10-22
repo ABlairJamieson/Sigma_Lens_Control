@@ -122,6 +122,8 @@ def main():
         'ctypes.CDLL("/opt/asi/ASI_linux_mac_SDK/lib/armv8/libASICamera2.so"); '
         'print("Python imports and ASI library load OK; camera not required")')
     configure_overlay()
+    # Apply explicit rules even if the vendor rules omit USB memory configuration.
+    run(sys.executable, ROOT / 'cm5_setup/camera_setup.py', '--apply')
     for bridge in ('teensy', 'asi'):
         unit = bridge + '-bridge.service'
         # CM5 units are independent of the BeagleY service templates.
@@ -139,7 +141,8 @@ def main():
     run('systemctl', 'enable', '--now', 'ssh.service')
     run('systemctl', 'enable', 'fake-hwclock.service')
     run('fake-hwclock', 'save')
-    print('CM5 setup complete. Reboot to apply audio overlay. Network unchanged.')
+    print('CM5 setup complete. REBOOT to apply audio overlay and camera buffer settings. Network unchanged.')
+    print('After reboot: sudo python3 cm5_setup/camera_setup.py --check')
     print('Clock persistence is approximate; correct time needs NTP or manual setting.')
     print('Connect Teensy/camera, then enable --now both bridge services.')
 

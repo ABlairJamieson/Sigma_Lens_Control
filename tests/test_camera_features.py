@@ -145,6 +145,73 @@ class CameraFeatures(unittest.TestCase):
         self.assertEqual(response["diagnostics"]["capture_failures"], 1)
         self.assertEqual(response["diagnostics"]["last_capture_error"]["exposure_status"], 3)
 
+    def test_live_timeout_retries_then_recovers_and_stops_on_persistent_failure(self):
+        b = bridge()
+        owner = MemoryConnection()
+        original = b.cam.capture_video_frame
+        calls = []
+        class SDKTimeout(Exception):
+            error_code = 11
+        def delayed(timeout):
+            calls.append(timeout)
+            if len(calls) <= 2:
+                raise SDKTimeout("Timeout")
+            return original(timeout)
+        b.cam.capture_video_frame = delayed
+        request = {"cmd": "live_frame", "exposure_us": 10000}
+        self.assertTrue(b.live_frame(request, owner)["busy"])
+        self.assertTrue(b.live_frame(request, owner)["busy"])
+        self.assertIsNone(b.live_frame(request, owner))
+        self.assertGreaterEqual(calls[0], 8000)
+        self.assertEqual(b.live_timeouts, 0)
+        self.assertFalse(b.live_warming)
+        def fail(timeout):
+            raise SDKTimeout("Timeout")
+        b.cam.capture_video_frame = fail
+        self.assertTrue(b.live_frame(request, owner)["busy"])
+        self.assertTrue(b.live_frame(request, owner)["busy"])
+        self.assertFalse(b.live_frame(request, owner)["ok"])
+        self.assertFalse(b.video_running)
+        self.assertIsNone(b.live_owner)
+        self.assertEqual(b.cam.get_roi_format()[3], SDK.ASI_IMG_RAW16)
+
+    def test_late_camera_retries_without_client_and_serializes_sdk_access(self):
+        b = bridge()
+        b.cam = None
+        attempts = []
+        def initialize():
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("No ASI cameras detected")
+            b.cam = Camera()
+            b.info = {"Name": "Late camera"}
+        b.init_camera = initialize
+        self.assertFalse(b.retry_camera_once())
+        self.assertIsNone(b.cam)
+        b.lock.acquire()
+        try:
+            self.assertFalse(b.retry_camera_once())
+            self.assertEqual(len(attempts), 1)
+        finally:
+            b.lock.release()
+        self.assertTrue(b.retry_camera_once())
+        self.assertTrue(b.retry_camera_once())
+        self.assertEqual(len(attempts), 2)
+
+    def test_failed_camera_initialization_closes_partial_camera(self):
+        b = bridge()
+        closed = []
+        def initialize():
+            b.cam = types.SimpleNamespace(close=lambda: closed.append(True))
+            raise RuntimeError("Initialization failed")
+        b._initialize_camera = initialize
+        with self.assertRaises(RuntimeError):
+            b.init_camera()
+        self.assertEqual(closed, [True])
+        self.assertIsNone(b.cam)
+        self.assertIsNone(b.info)
+        self.assertIsNone(b.controls)
+
     def test_live_to_still_and_back(self):
         camera = bridge()
         live = MemoryConnection()

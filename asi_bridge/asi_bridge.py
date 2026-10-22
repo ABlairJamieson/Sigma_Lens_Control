@@ -74,10 +74,41 @@ class ASIBridge:
         self.lock = threading.Lock()
         self.live_owner = None
         self.live_config = None
+        self.live_timeouts = 0
+        self.live_warming = True
         self.video_running = False
         self.state = dict(DEFAULTS)
 
     def init_camera(self):
+        try:
+            self._initialize_camera()
+        except Exception:
+            camera, self.cam = self.cam, None
+            self.info = None
+            self.controls = None
+            if camera is not None:
+                try:
+                    camera.close()
+                except Exception:
+                    pass
+            raise
+
+    def retry_camera_once(self):
+        if not self.lock.acquire(blocking=False):
+            return False
+        try:
+            if self.cam is None:
+                try:
+                    self.init_camera()
+                    log(f"Camera initialized after retry: {self.info.get('Name')}")
+                except Exception as e:
+                    log(f"Camera not ready; retrying in 5 seconds: {e}")
+                    return False
+            return True
+        finally:
+            self.lock.release()
+
+    def _initialize_camera(self):
         log(f"init_camera(): sdk_path={self.sdk_path}")
 
         if not os.path.exists(self.sdk_path):
@@ -213,8 +244,26 @@ class ASIBridge:
             self.cam.start_video_capture()
             self.video_running = True
             self.live_config = config
+            self.live_timeouts = 0
+            self.live_warming = True
         self.live_owner = conn
-        frame = self.cam.capture_video_frame(timeout=2 * exposure // 1000 + 1500)
+        # First frames can require sensor startup plus a full sensor readout,
+        # even when the delivered JPEG is small. Keep retries bounded.
+        timeout_ms = 2 * exposure // 1000 + (8000 if self.live_warming else 3000)
+        try:
+            frame = self.cam.capture_video_frame(timeout=timeout_ms)
+        except Exception as e:
+            if getattr(e, "error_code", None) != 11:
+                raise
+            self.live_timeouts += 1
+            log(f"Live frame timeout {self.live_timeouts}/3 (budget {timeout_ms} ms)")
+            if self.live_timeouts >= 3:
+                self.release_live(conn)
+                return _err("Live camera timed out three times; check USB connection and power")
+            return _ok(cmd="live_frame", busy=True, retry_reason="camera_timeout",
+                       consecutive_timeouts=self.live_timeouts)
+        self.live_timeouts = 0
+        self.live_warming = False
         height, width = frame.shape[:2]
         scale = min(max_width / width, max_height / height, 1.0)
         if scale < 1:
@@ -489,6 +538,13 @@ class ASIBridge:
         return _err(f"Unknown cmd: {cmd}")
 
 
+def camera_retry_worker(bridge):
+    # Run without clients, so a late camera does not require a GUI click or restart.
+    while True:
+        time.sleep(5)
+        bridge.retry_camera_once()
+
+
 def serve():
     bridge = ASIBridge()
 
@@ -497,6 +553,8 @@ def serve():
         log(f"Camera initialized: {bridge.info.get('Name')}")
     except Exception as e:
         log(f"WARNING: camera not initialized yet: {e}")
+
+    threading.Thread(target=camera_retry_worker, args=(bridge,), daemon=True).start()
 
     log(f"Listening on {LISTEN_HOST}:{LISTEN_PORT}")
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

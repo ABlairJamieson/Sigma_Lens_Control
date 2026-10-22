@@ -34,7 +34,7 @@ void LiveViewClient::requestFrame() {
   const QJsonObject request{{"cmd", "live_frame"}, {"max_width", mSize.width()}, {"max_height", mSize.height()},
                             {"jpeg_quality", 80}, {"exposure_us", mExposure}, {"gain", mGain}};
   mSocket.write(QJsonDocument(request).toJson(QJsonDocument::Compact)+"\n");
-  mWaiting = true; mDeadline.start(15000);
+  mWaiting = true; mDeadline.start(20000);
 }
 void LiveViewClient::receive() {
   if (!mActive) return;
