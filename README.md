@@ -90,11 +90,12 @@ For now, keep the downloaded SDK on the provisioning PC at:
 C:\Users\ablai\Downloads\ASI_Camera_SDK-linux\ASI_Camera_SDK
 ```
 
-The extracted directory must contain
+The extracted staging directory must contain
 `ASI_linux_mac_SDK/lib/armv8/libASICamera2.so` and
 `ASI_linux_mac_SDK/lib/asi.rules`. Copy that directory to the BeagleY at
-`~/Downloads/ASI_Camera_SDK-linux/ASI_Camera_SDK`, or pass its actual path
-with `--sdk-source`. The script installs it at
+`/home/photogrammetry/Downloads/ASI_Camera_SDK-linux`, or pass its actual
+path with `--sdk-source`. You may also pass the `ASI_linux_mac_SDK`
+directory itself. The script installs it at
 `/opt/asi/ASI_linux_mac_SDK` and retains the versioned directory
 `/opt/asi/ASI_linux_mac_SDK_V1.41`.
 

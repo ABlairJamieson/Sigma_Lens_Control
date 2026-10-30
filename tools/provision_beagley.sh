@@ -6,8 +6,9 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-SDK_SOURCE_DEFAULT="${HOME}/Downloads/ASI_Camera_SDK-linux/ASI_Camera_SDK"
+SDK_SOURCE_DEFAULT="/home/photogrammetry/Downloads/ASI_Camera_SDK-linux"
 SDK_SOURCE="$SDK_SOURCE_DEFAULT"
+SDK_DIR=""
 BOARD_NUMBER=""
 DRY_RUN=0
 
@@ -19,8 +20,9 @@ Board N produces hostname pchN and eth0 address 192.168.50.(N+1)/24.
 
 Options:
   --board-number N    Required board number, normally 2 through 7
-  --sdk-source PATH   Extracted ASI_Camera_SDK directory
-                      (default: ~/Downloads/ASI_Camera_SDK-linux/ASI_Camera_SDK)
+  --sdk-source PATH   SDK staging directory containing ASI_linux_mac_SDK,
+                      or the ASI_linux_mac_SDK directory itself
+                      (default: /home/photogrammetry/Downloads/ASI_Camera_SDK-linux)
   --dry-run           Show actions without changing the system
   -h, --help          Show this help
 USAGE
@@ -60,20 +62,28 @@ fi
 
 if (( ! DRY_RUN )); then
     [[ -d "$SDK_SOURCE" ]] || die "SDK source directory not found: $SDK_SOURCE"
-    [[ -f "$SDK_SOURCE/ASI_linux_mac_SDK/lib/armv8/libASICamera2.so" ]] || \
+    if [[ -f "$SDK_SOURCE/ASI_linux_mac_SDK/lib/armv8/libASICamera2.so" ]]; then
+        SDK_DIR="$SDK_SOURCE/ASI_linux_mac_SDK"
+    elif [[ -f "$SDK_SOURCE/lib/armv8/libASICamera2.so" ]]; then
+        SDK_DIR="$SDK_SOURCE"
+    else
         die "SDK library not found below: $SDK_SOURCE"
+    fi
+fi
+if [[ -z "$SDK_DIR" ]]; then
+    SDK_DIR="$SDK_SOURCE/ASI_linux_mac_SDK"
 fi
 
 log "Target: ${HOSTNAME}, eth0=${ETH0_ADDRESS}"
 log "Installing Debian packages"
 run "${SUDO[@]}" apt-get update
-run "${SUDO[@]}" apt-get install -y python3-venv python3-opencv python3-numpy python3-pyserial systemd udev
+run "${SUDO[@]}" apt-get install -y python3-venv python3-opencv python3-numpy python3-serial systemd udev
 
 log "Installing SDK under /opt/asi"
 run "${SUDO[@]}" install -d -m 0755 /opt/asi/ASI_linux_mac_SDK_V1.41
-run "${SUDO[@]}" cp -a "$SDK_SOURCE/ASI_linux_mac_SDK/." "/opt/asi/ASI_linux_mac_SDK_V1.41/"
+run "${SUDO[@]}" cp -a "$SDK_DIR/." "/opt/asi/ASI_linux_mac_SDK_V1.41/"
 run "${SUDO[@]}" ln -sfn /opt/asi/ASI_linux_mac_SDK_V1.41 /opt/asi/ASI_linux_mac_SDK
-run "${SUDO[@]}" install -m 0644 "$SDK_SOURCE/ASI_linux_mac_SDK/lib/asi.rules" /etc/udev/rules.d/asi.rules
+run "${SUDO[@]}" install -m 0644 "$SDK_DIR/lib/asi.rules" /etc/udev/rules.d/asi.rules
 run "${SUDO[@]}" udevadm control --reload-rules
 run "${SUDO[@]}" udevadm trigger
 
