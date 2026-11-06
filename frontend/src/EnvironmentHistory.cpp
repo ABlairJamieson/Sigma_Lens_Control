@@ -28,7 +28,7 @@ EnvironmentHistory::EnvironmentHistory(QWidget* parent) : QWidget(parent), mLog(
   layout->addWidget(createScale(this, false));
   mStatus = new QLabel("All connected bridge sensor heartbeats are logged. Weekly CSV/gzip logs: " + mLog->directory(), this);
   mStatus->setWordWrap(true); layout->addWidget(mStatus);
-  mPlot = new QWidget(this); mPlot->setMinimumSize(420, 420);
+  mPlot = new QWidget(this); mPlot->setMinimumSize(420, 630);
   mPlot->installEventFilter(this); layout->addWidget(mPlot, 1);
   mPlot->setToolTip("Plots show one heartbeat per 10 seconds; every heartbeat is saved in CSV/gzip logs.");
   connect(mLog, &SensorLog::changed, this, [this] { mPlot->update(); if (mMotionPlot) mMotionPlot->update(); });
@@ -64,7 +64,8 @@ void EnvironmentHistory::paintPlot(QWidget* widget, bool motion) {
   const QColor colors[] = {QColor("#0072B2"), QColor("#D55E00"), QColor("#009E73"), QColor("#CC79A7"), QColor("#8B6508"), QColor("#56B4E9"), QColor("#6A3D9A"), QColor("#444444")};
   const qint64 window = motion ? mMotionWindow : mWindow;
   const auto& samples = mLog->samples();
-  const int metrics = motion ? 3 : 2;
+  const int metrics = 3;
+  const QStringList environmentNames = {"Temperature (°C)", "Relative humidity (%)", "Pressure (hPa)"};
   const QStringList names = mMotionGroup == 0 ? QStringList{"Magnetic X (µT)", "Magnetic Y (µT)", "Magnetic Z (µT)"} : mMotionGroup == 1 ? QStringList{"Gyroscope X (rad/s)", "Gyroscope Y (rad/s)", "Gyroscope Z (rad/s)"} : QStringList{"Acceleration X (m/s²)", "Acceleration Y (m/s²)", "Acceleration Z (m/s²)"};
   const qint64 end = QDateTime::currentMSecsSinceEpoch(), start = end - window;
   for (int slot = 1; slot <= 8; ++slot) { p.setPen(colors[slot-1]); p.drawText(10 + (slot-1)* (widget->width()/8), 18, QString("Slot %1").arg(slot)); }
@@ -75,13 +76,13 @@ void EnvironmentHistory::paintPlot(QWidget* widget, bool motion) {
     double low = 0, high = 100; bool any = false;
     if (!fixedRange) { low = 1e9; high = -1e9; }
     for (const auto& s : samples) if (s.time >= start && s.time <= end && std::isfinite(s.values[valueIndex])) { any = true; if (!fixedRange) { low = std::min(low, s.values[valueIndex]); high = std::max(high, s.values[valueIndex]); } }
-    if (!fixedRange) { if (!any) { low = 0; high = 40; } else { double minimumPad = motion ? (mMotionGroup == 1 ? 0.001 : 0.1) : 1.0; double pad = std::max(minimumPad, (high-low)*0.1); low -= pad; high += pad; } }
-    p.setPen(palette().text().color()); p.drawText(box.left(), box.top()-10, motion ? names[metric] : (metric == 0 ? "Temperature (°C)" : "Relative humidity (%)"));
+    if (!fixedRange) { if (!any) { low = !motion && metric == 2 ? 950 : 0; high = !motion && metric == 2 ? 1050 : 40; } else { double minimumPad = motion ? (mMotionGroup == 1 ? 0.001 : 0.1) : 1.0; double pad = std::max(minimumPad, (high-low)*0.1); low -= pad; high += pad; } }
+    p.setPen(palette().text().color()); p.drawText(box.left(), box.top()-10, motion ? names[metric] : environmentNames[metric]);
     const int ticks = widget->width() < 600 ? 2 : 4;
     for (int tick = 0; tick <= ticks; ++tick) {
       double y = box.bottom() - tick * box.height()/ticks;
       p.setPen(palette().mid().color()); p.drawLine(QPointF(box.left(), y), QPointF(box.right(), y));
-      p.setPen(palette().text().color()); p.drawText(QRectF(0, y-10, 58, 20), Qt::AlignRight | Qt::AlignVCenter, QString::number(low+(high-low)*tick/ticks, 'g', 4));
+      p.setPen(palette().text().color()); p.drawText(QRectF(0, y-10, 58, 20), Qt::AlignRight | Qt::AlignVCenter, QString::number(low+(high-low)*tick/ticks, 'g', !motion && metric == 2 ? 6 : 4));
       const auto time = QDateTime::fromMSecsSinceEpoch(start + window*tick/ticks);
       double x = box.left() + tick*box.width()/ticks;
       p.drawText(QRectF(x-48, box.bottom()+5, 96, 32), Qt::AlignCenter, time.toString(window >= 86400000 ? "MMM d\nHH:mm" : "HH:mm"));
