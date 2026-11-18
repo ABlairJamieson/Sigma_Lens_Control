@@ -8,6 +8,7 @@ import select
 import threading
 import ctypes
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import cv2
@@ -58,8 +59,30 @@ def log(msg: str):
 CARRIER_SOCKET = "/run/sigma-carrier/control.sock"
 
 
+def host_platform():
+    try:
+        compatible = Path("/proc/device-tree/compatible").read_bytes().lower()
+    except OSError:
+        compatible = b""
+    if b"radxa,cm5" in compatible:
+        return "radxa_cm5"
+    if b"beagle" in compatible:
+        return "beagley_ai"
+    return "unknown"
+
+
+def bridge_capabilities(carrier):
+    supported = carrier.get("available", False) and carrier.get("platform") != "beagley_ai"
+    return {"platform": carrier.get("platform", host_platform()),
+            "carrier_power": bool(supported), "carrier_telemetry": bool(supported)}
+
+
 def carrier_request(command="read"):
     """Use the privileged local GPIO owner; never access hardware from the bridge."""
+    platform = host_platform()
+    if platform == "beagley_ai":
+        return {"available": False, "supported": False, "platform": platform,
+                "error": "CM5 carrier power and rail monitoring are not supported on BeagleY"}
     try:
         with socket.socket(socket.AF_UNIX) as client:
             client.settimeout(2)
@@ -76,10 +99,10 @@ def carrier_request(command="read"):
         result = json.loads(data)
         if not isinstance(result, dict) or "error" in result:
             raise RuntimeError(str(result.get("error")) if isinstance(result, dict) else "Invalid carrier reply")
-        result["available"] = True
+        result.update(available=True, supported=True, platform=platform)
         return result
     except (OSError, ValueError, RuntimeError) as exc:
-        return {"available": False, "error": str(exc)}
+        return {"available": False, "supported": False, "platform": platform, "error": str(exc)}
 
 
 class ASIBridge:
@@ -375,7 +398,7 @@ class ASIBridge:
         if self.cam is None:
             log("status(): cam is None -> connected=False")
             return _ok(cmd="status", connected=False, sdk_path=self.sdk_path, state=self.state,
-                       diagnostics=self.diagnostics(), carrier=carrier)
+                       diagnostics=self.diagnostics(), carrier=carrier, capabilities=bridge_capabilities(carrier))
 
         try:
             exp = self.cam.get_control_value(asi.ASI_EXPOSURE)[0]
@@ -388,6 +411,7 @@ class ASIBridge:
         resp = _ok(
             cmd="status",
             carrier=carrier,
+            capabilities=bridge_capabilities(carrier),
             connected=True,
             diagnostics=self.diagnostics(),
             camera_name=self.info.get("Name"),
@@ -560,7 +584,8 @@ class ASIBridge:
         log(f"handle_request(): cmd={cmd} req={req}")
 
         if cmd == "carrier_read":
-            return _ok(cmd="carrier_read", carrier=carrier_request())
+            carrier = carrier_request()
+            return _ok(cmd="carrier_read", carrier=carrier, capabilities=bridge_capabilities(carrier))
 
         if cmd == "camera_power":
             return self.camera_power(req)

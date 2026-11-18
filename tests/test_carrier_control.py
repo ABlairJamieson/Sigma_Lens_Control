@@ -58,6 +58,22 @@ class CarrierTests(unittest.TestCase):
                 thread.join(3)
                 server.close()
 
+    def test_platform_detection(self):
+        for compatible, expected in [(b'radxa,cm5\0rockchip,rk3588', 'radxa_cm5'),
+                                     (b'beagle,beagley-ai\0ti,j722s', 'beagley_ai')]:
+            with patch.object(bridge_module.Path, 'read_bytes', return_value=compatible):
+                self.assertEqual(bridge_module.host_platform(), expected)
+
+    def test_beagley_never_probes_or_switches_cm5_service(self):
+        b = bridge()
+        with patch.object(bridge_module, 'host_platform', return_value='beagley_ai'), \
+             patch.object(bridge_module.socket, 'socket') as connection:
+            response = b.status()
+            self.assertFalse(response['capabilities']['carrier_power'])
+            self.assertEqual(response['capabilities']['platform'], 'beagley_ai')
+            self.assertFalse(b.camera_power({'enabled':True})['ok'])
+            connection.assert_not_called()
+
     def test_status_with_camera_off_and_no_sdk_handle(self):
         b = bridge_module.ASIBridge()
         with patch.object(bridge_module, 'carrier_request', return_value=state()):

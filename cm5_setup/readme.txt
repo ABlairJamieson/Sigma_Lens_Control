@@ -26,7 +26,7 @@ RADXA CM5 CUSTOM CARRIER - NOT BEAGLEY (tech: verify flash notes)
 6. CM5 terminal as photogrammetry (installer keeps services disabled):
    cd ~; tar -xjf ASI_linux_mac_SDK_V1.41.tar.bz2
    cd ~/Sigma_Lens_Control
-   sudo python3 cm5_setup/install.py --sdk ~/ASI_linux_mac_SDK_V1.41
+   sudo python3 cm5_setup/install.py --sdk ~/ASI_linux_mac_SDK_V1.41 --camera-id ID
    sudo passwd -l root
    sudo passwd radxa
    sudo reboot
@@ -73,7 +73,7 @@ needing a client connection; retries never reset USB or change camera power.
 
 CARRIER v1.1 POWER + TELEMETRY (optional; new power carrier only)
 For the next v1.1 carrier, replace the installer invocation in step 6 with:
-  sudo python3 cm5_setup/install.py --sdk ~/ASI_linux_mac_SDK_V1.41 --carrier-v1-1
+  sudo python3 cm5_setup/install.py --sdk ~/ASI_linux_mac_SDK_V1.41 --camera-id ID --carrier-v1-1
 For an already-installed CM5, the offline carrier-only installation is:
   sudo python3 cm5_setup/install_carrier_control.py
 The carrier service is enabled at boot and defaults camera 12 V OFF.
@@ -82,3 +82,17 @@ its existing camera port 5001 and can turn camera 12 V ON, read INA226 voltage/
 current for camera 12 V and carrier 5 V, and read the J602 TMP117 at 0x48.
 No Teensy firmware/protocol change or extra TCP port is required.
 See cm5_setup/CARRIER_CONTROL.md for wiring, protocol, deployment and tests.
+
+TEENSY RELEASE UPDATES (CM5 OR BEAGLEY)
+The host installer now requires --camera-id ID and stages the published firmware
+release from tools/firmware-release.json on origin/main. ID is the Teensy camera
+ID, not the pch hostname/IP number. Nothing is flashed by host provisioning.
+One-time tools setup, as the normal user on the CM5/BeagleY:
+  bash tools/install_teensy_tools.sh
+Build without connected hardware:
+  python3 tools/update_teensy.py --camera-id ID
+When connected, explicitly select USB serial and flash:
+  python3 tools/update_teensy.py --camera-id ID --serial USB_SERIAL --flash
+This temporarily stops a running teensy-bridge and restores it even if upload
+fails. It verifies ST reports the selected ID and published FW version.
+See tools/TEENSY_UPDATE.md for preparation, offline use and USB permissions.

@@ -15,6 +15,8 @@
 #include <QToolButton>
 #include <QPushButton>
 #include <QHBoxLayout>
+#include <QTabWidget>
+#include <QScrollArea>
 
 
 static QString exposureToFriendlyString(double ms)
@@ -57,6 +59,11 @@ DevicePanel::DevicePanel(QWidget* parent)
   mCarrierReadings->setObjectName("carrierReadings");
   mCarrierReadings->setTextFormat(Qt::PlainText);
   mCarrierReadings->setWordWrap(true);
+  mCarrierReason = new QLabel("Connect the camera bridge to detect carrier support", carrierBox);
+  mCarrierReason->setObjectName("carrierAvailability");
+  mCarrierReason->setWordWrap(true);
+  mCarrierReason->setTextFormat(Qt::PlainText);
+  carrierLayout->addWidget(mCarrierReason);
   carrierLayout->addWidget(mCarrierReadings);
   auto powerButtons = new QHBoxLayout;
   mCameraPowerOn = new QPushButton("Camera 12 V ON", carrierBox);
@@ -65,6 +72,10 @@ DevicePanel::DevicePanel(QWidget* parent)
   mCameraPowerOff->setObjectName("cameraPowerOff");
   powerButtons->addWidget(mCameraPowerOn);
   powerButtons->addWidget(mCameraPowerOff);
+  mCarrierRefresh = new QPushButton("Refresh readings", carrierBox);
+  mCarrierRefresh->setObjectName("carrierRefresh");
+  powerButtons->addWidget(mCarrierRefresh);
+  connect(mCarrierRefresh, &QPushButton::clicked, mCam, &CameraClient::requestStatus);
   carrierLayout->addLayout(powerButtons);
   ui->verticalLayout->insertWidget(2, carrierBox);
   connect(mCameraPowerOn, &QPushButton::clicked, this, [this] { mCam->setCameraPower(true); });
@@ -89,7 +100,7 @@ DevicePanel::DevicePanel(QWidget* parent)
   connect(staleTimer, &QTimer::timeout, this, [this] {
     if (cameraConnected() && mCarrierReceivedAt &&
         QDateTime::currentMSecsSinceEpoch() - mCarrierReceivedAt > 15000) {
-      mCarrierAvailable = false;
+      mCarrierStale = true;
       updateCarrierControls();
       if (!mCarrierReadings->text().startsWith("STALE"))
         mCarrierReadings->setText("STALE — no carrier readback for 15 seconds\n" + mCarrierReadings->text());
@@ -146,6 +157,52 @@ DevicePanel::DevicePanel(QWidget* parent)
     mCameraDetails->setPlainText(details.join('\n'));
     emit cameraDiagnostics(mSlotIndex1, mConnectedCameraEndpoint, d);
   });
+
+  // Each section scrolls independently on smaller displays.
+  mControlTabs = new QTabWidget(this);
+  mControlTabs->setObjectName("cameraControlTabs");
+  auto addPage = [this](const QString& title, const QList<QWidget*>& widgets) {
+    auto page = new QWidget;
+    auto layout = new QVBoxLayout(page);
+    layout->setContentsMargins(6, 6, 6, 6);
+    for (auto widget : widgets) {
+      ui->verticalLayout->removeWidget(widget);
+      layout->addWidget(widget);
+    }
+    layout->addStretch();
+    auto scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidget(page);
+    mControlTabs->addTab(scroll, title);
+  };
+  addPage("Camera", {ui->group_camera, diagnosticsBox});
+  ui->gridEndpoints->removeWidget(ui->btn_lensPower);
+  addPage("Lens", {ui->btn_lensPower, ui->group_lens});
+  addPage("Environment", {ui->group_telemetry});
+  addPage("Power/status", {carrierBox});
+  addPage("Connection", {ui->group_connection});
+  ui->verticalLayout->addWidget(mControlTabs, 1);
+  auto quickConnect = new QHBoxLayout;
+  auto connectBoth = new QPushButton("Connect both", this);
+  auto disconnectBoth = new QPushButton("Disconnect both", this);
+  connectBoth->setObjectName("connectBoth");
+  disconnectBoth->setObjectName("disconnectBoth");
+  quickConnect->addWidget(connectBoth);
+  quickConnect->addWidget(disconnectBoth);
+  quickConnect->addStretch();
+  ui->verticalLayout->insertLayout(1, quickConnect);
+  connect(connectBoth, &QPushButton::clicked, this, [this] {
+    if (!lensConnected()) onLensConnectClicked();
+    if (!cameraConnected()) onCameraConnectClicked();
+  });
+  connect(disconnectBoth, &QPushButton::clicked, this, [this] {
+    onLensDisconnectClicked(); onCameraDisconnectClicked();
+  });
+  ui->label_slotTitle->setMinimumWidth(65);
+  ui->spacerTop->changeSize(0, 0, QSizePolicy::Fixed, QSizePolicy::Minimum);
+  ui->topBarLayout->setStretch(1, 1);
+  ui->label_overallStatus->setWordWrap(true);
 
   QSettings settings("HyperK", "SigmaControl");
   ui->edit_host->setText(settings.value("host", "192.168.137.175").toString());
@@ -351,15 +408,30 @@ void DevicePanel::setLensUiConnected(bool en)
 
 void DevicePanel::updateCarrierControls()
 {
-  const bool allowed = mCam && mCam->isConnected() && mCarrierAvailable && !mCam->isBusy() && !mCarrierLive;
+  QString reason;
+  if (!mCam || !mCam->isConnected()) reason = "Connect the camera bridge (camera port) to detect power support.";
+  else if (mBridgePlatform == "beagley_ai") reason = "BeagleY host: CM5 carrier switching and rail monitoring are not fitted.";
+  else if (!mCarrierAvailable) reason = "Carrier controls unavailable: " + mCarrierError;
+  else if (mCam->isBusy()) reason = "Camera busy — power changes are disabled until the operation finishes.";
+  else if (mCarrierLive) reason = "Stop live view to enable camera power changes. Readbacks remain available.";
+  else if (mCarrierStale) reason = "Carrier readbacks are stale — refresh readings before changing power.";
+  else reason = "Carrier detected: camera 12 V can be switched. The CM5 5 V rail is monitoring only.";
+  const bool allowed = mCam && mCam->isConnected() && mCarrierAvailable && !mCarrierStale && !mCam->isBusy() && !mCarrierLive;
   mCameraPowerOn->setEnabled(allowed);
   mCameraPowerOff->setEnabled(allowed);
+  mCameraPowerOn->setToolTip(reason);
+  mCameraPowerOff->setToolTip(reason);
+  mCarrierReason->setText(reason);
+  mCarrierRefresh->setEnabled(mCam && mCam->isConnected() && !mCam->isBusy());
 }
 
 void DevicePanel::displayCarrier(const QJsonObject& carrier)
 {
   mCarrierReceivedAt = QDateTime::currentMSecsSinceEpoch();
-  mCarrierAvailable = carrier.value("available").toBool(false) &&
+  mCarrierStale = false;
+  mBridgePlatform = carrier.value("platform").toString();
+  mCarrierError = carrier.value("error").toString("No valid carrier power readback");
+  mCarrierAvailable = mBridgePlatform != "beagley_ai" && carrier.value("available").toBool(false) &&
                       carrier.value("camera_enabled").isBool() &&
                       carrier.value("camera_fault_active").isBool();
   updateCarrierControls();
@@ -782,6 +854,9 @@ void DevicePanel::onCameraConnectedChanged(bool connected)
     mCameraDiagnostics = {};
     mCarrierAvailable = false;
     mCarrierLive = false;
+    mCarrierStale = false;
+    mBridgePlatform.clear();
+    mCarrierError.clear();
     mCarrierReceivedAt = 0;
     mCarrierReadings->setText("Disconnected — carrier readings cleared");
     mCameraTemperature->setText("Camera disconnected — previous readings cleared");

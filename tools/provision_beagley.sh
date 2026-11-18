@@ -10,16 +10,18 @@ SDK_SOURCE_DEFAULT="/home/photogrammetry/Downloads/ASI_Camera_SDK-linux"
 SDK_SOURCE="$SDK_SOURCE_DEFAULT"
 SDK_DIR=""
 BOARD_NUMBER=""
+CAMERA_ID=""
 DRY_RUN=0
 
 usage() {
     cat <<'USAGE'
-Usage: provision_beagley.sh --board-number N [options]
+Usage: provision_beagley.sh --board-number N --camera-id ID [options]
 
 Board N produces hostname pchN and eth0 address 192.168.50.(N+1)/24.
 
 Options:
   --board-number N    Required board number, normally 2 through 7
+  --camera-id ID      Required Teensy ID (0..255), independent of board number
   --sdk-source PATH   SDK staging directory containing ASI_linux_mac_SDK,
                       or the ASI_linux_mac_SDK directory itself
                       (default: /home/photogrammetry/Downloads/ASI_Camera_SDK-linux)
@@ -41,6 +43,7 @@ run() {
 while (($#)); do
     case "$1" in
         --board-number) [[ $# -ge 2 ]] || die "--board-number needs a value"; BOARD_NUMBER="$2"; shift 2 ;;
+        --camera-id) [[ $# -ge 2 ]] || die "--camera-id needs a value"; CAMERA_ID="$2"; shift 2 ;;
         --sdk-source) [[ $# -ge 2 ]] || die "--sdk-source needs a value"; SDK_SOURCE="$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -50,6 +53,8 @@ done
 
 [[ "$BOARD_NUMBER" =~ ^[0-9]+$ ]] || die "--board-number must be numeric"
 (( BOARD_NUMBER >= 2 && BOARD_NUMBER <= 254 )) || die "board number must be between 2 and 254"
+[[ "$CAMERA_ID" =~ ^[0-9]+$ ]] || die "--camera-id must be numeric"
+(( CAMERA_ID >= 0 && CAMERA_ID <= 255 )) || die "camera ID must be in 0..255"
 IP_LAST=$((BOARD_NUMBER + 1))
 HOSTNAME="pch${BOARD_NUMBER}"
 ETH0_ADDRESS="192.168.50.${IP_LAST}/24"
@@ -77,7 +82,17 @@ fi
 log "Target: ${HOSTNAME}, eth0=${ETH0_ADDRESS}"
 log "Installing Debian packages"
 run "${SUDO[@]}" apt-get update
-run "${SUDO[@]}" apt-get install -y python3-venv python3-opencv python3-numpy python3-serial systemd udev
+run "${SUDO[@]}" apt-get install -y python3-venv python3-opencv python3-numpy python3-serial systemd udev git ca-certificates
+
+log "Staging latest published Teensy release (no upload)"
+if (( EUID == 0 )); then
+    run runuser -u photogrammetry -- python3 "$REPO_ROOT/tools/update_teensy.py" --camera-id "$CAMERA_ID" --prepare-only
+else
+    run python3 "$REPO_ROOT/tools/update_teensy.py" --camera-id "$CAMERA_ID" --prepare-only
+fi
+
+log "Granting the bridge account USB serial access"
+run "${SUDO[@]}" usermod -aG dialout photogrammetry
 
 log "Installing SDK under /opt/asi"
 run "${SUDO[@]}" install -d -m 0755 /opt/asi/ASI_linux_mac_SDK_V1.41

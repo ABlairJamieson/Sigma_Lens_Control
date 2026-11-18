@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QTemporaryDir>
 #include <QSettings>
+#include <QTabWidget>
 #include "DevicePanel.h"
 #include "CameraClient.h"
 
@@ -71,11 +72,29 @@ private slots:
     QTRY_VERIFY(!cam->cameraReady());
     QTRY_VERIFY(label->text().contains("0.000 V"));
     QCOMPARE(first.powerCommands,2);
-    panel.resize(720,1000);
+    auto tabs=panel.findChild<QTabWidget*>("cameraControlTabs");
+    QVERIFY(tabs);
+    QCOMPARE(tabs->count(),5);
+    QCOMPARE(tabs->tabText(3),QString("Power/status"));
+    panel.resize(620,580);
     panel.show();
     QTest::qWait(20);
-    if (qEnvironmentVariableIsSet("CARRIER_SCREENSHOT"))
-      QVERIFY(panel.grab().save(qEnvironmentVariable("CARRIER_SCREENSHOT")));
+    QVERIFY2(panel.height()<=600,"Tabbed panel still forces a tall window");
+    if (qEnvironmentVariableIsSet("CARRIER_SCREENSHOT")) {
+      for (int page=0;page<tabs->count();++page) {
+        tabs->setCurrentIndex(page);QTest::qWait(20);
+        QVERIFY(panel.grab().save(qEnvironmentVariable("CARRIER_SCREENSHOT")+QString::number(page)+".png"));
+      }
+    }
+    cam->diagnosticsReceived(QJsonObject{{"live_active",true}});
+    QVERIFY(!on->isEnabled());
+    QVERIFY(panel.findChild<QLabel*>("carrierAvailability")->text().contains("Stop live view"));
+    cam->diagnosticsReceived(QJsonObject{{"live_active",false}});
+    QVERIFY(on->isEnabled());
+    cam->carrierReceived(QJsonObject{{"available",false},{"platform","beagley_ai"},
+      {"error","CM5 carrier not supported on BeagleY"}});
+    QVERIFY(!on->isEnabled());
+    QVERIFY(panel.findChild<QLabel*>("carrierAvailability")->text().contains("BeagleY"));
     // Independent sensor errors remain visible without disabling power control.
     cam->carrierReceived(QJsonObject{{"available",true},{"camera_enabled",false},
       {"camera_fault_active",false},{"temperature",QJsonObject{{"error","sensor NACK"}}}});

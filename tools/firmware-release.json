@@ -1,0 +1,9 @@
+{
+  "version": "2.0.0",
+  "ref": "firmware/v2",
+  "commit": "e4f9197b076f60e2991d9eb47eeb2bd791fe0742",
+  "fqbn": "teensy:avr:teensy40",
+  "mcu": "TEENSY40",
+  "core": "teensy:avr@1.62.0",
+  "loader_commit": "03fca4156c244c7ad36bd368cf6e24531dbd566a"
+}

@@ -79,7 +79,10 @@ def main():
                         help='Extracted ASI_linux_mac_SDK_V1.41 directory')
     parser.add_argument('--carrier-v1-1', action='store_true',
                         help='Install v1.1 camera power/INA226/TMP117 service (camera defaults OFF)')
+    parser.add_argument('--camera-id', type=int, required=True,
+                        help='Teensy camera ID, independent of hostname/IP; stages latest released firmware')
     args = parser.parse_args()
+    require(0 <= args.camera_id <= 255, 'camera-id must be in 0..255')
     require(os.geteuid() == 0, 'Run using sudo python3 cm5_setup/install.py --sdk ...')
     require(platform.machine() == 'aarch64', 'Requires 64-bit ARM Linux')
     require(b'radxa,cm5' in Path('/proc/device-tree/compatible').read_bytes(),
@@ -101,6 +104,8 @@ def main():
     run('apt-get', 'install', '-y', 'git', 'openssh-server', 'ca-certificates',
         'python3-venv', 'python3-pip', 'python3-numpy', 'python3-opencv',
         'python3-serial', 'device-tree-compiler', 'fake-hwclock', 'usbutils')
+    run('runuser', '-u', 'photogrammetry', '--', sys.executable,
+        ROOT / 'tools/update_teensy.py', '--camera-id', args.camera_id, '--prepare-only')
     run('usermod', '-aG', 'dialout', 'photogrammetry')
     dest = SDK_DEST / 'lib/armv8'
     dest.mkdir(parents=True, exist_ok=True)
@@ -145,6 +150,7 @@ def main():
     run('systemctl', 'enable', '--now', 'ssh.service')
     run('systemctl', 'enable', 'fake-hwclock.service')
     run('fake-hwclock', 'save')
+    print('Latest published Teensy source staged; build/upload separately with tools/update_teensy.py.')
     print('CM5 setup complete. REBOOT to apply audio overlay and camera buffer settings. Network unchanged.')
     print('After reboot: sudo python3 cm5_setup/camera_setup.py --check')
     print('Clock persistence is approximate; correct time needs NTP or manual setting.')

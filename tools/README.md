@@ -68,3 +68,16 @@ Avoid changing lens settings from another controller during a scripted acquisiti
 The script requests/validates settings but does not implement a cross-client lens
 reservation protocol. The ASI service serializes camera access and temporarily
 pauses video for each full-resolution capture.
+
+# Teensy maintenance and provisioning
+
+See [TEENSY_UPDATE.md](TEENSY_UPDATE.md) for the shared CM5/BeagleY updater.
+Both host provisioning paths require a separate Teensy camera ID; for example:
+
+```sh
+bash tools/provision_beagley.sh --board-number 2 --camera-id 7 --dry-run
+```
+
+The host number/IP and firmware camera ID need not match. Provisioning stages
+published firmware source without uploading; use the dedicated updater to build
+and explicitly flash the selected USB device.

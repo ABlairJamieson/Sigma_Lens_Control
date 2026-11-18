@@ -367,7 +367,7 @@ python3 -m unittest discover -s tests -v
 
 The optional v1.1 carrier service owns camera 12 V enable and reads two INA226
 monitors plus one J602 TMP117 at 0x48. Provision with
-`sudo python3 cm5_setup/install.py --sdk PATH_TO_SDK --carrier-v1-1`.
+`sudo python3 cm5_setup/install.py --sdk PATH_TO_SDK --camera-id ID --carrier-v1-1`.
 Camera 12 V defaults OFF after boot. SigmaControl provides per-camera power
 buttons and voltage/current/temperature readbacks through the existing ASI
 connection on port 5001; no extra port or Teensy firmware change is needed.
@@ -378,3 +378,13 @@ On the DAQ desktop, launch the frontend with `frontend/run_sigma_control.sh`
 Qt library/plugin search overrides for this process, avoiding conflicts with
 older Qt libraries bundled with WaveDump. It does not change WaveDump or shell
 startup configuration. Build `frontend/SigmaControl` with qmake/make first.
+
+### Updating Teensy firmware on CM5 or BeagleY
+
+Use the shared [Teensy updater](tools/TEENSY_UPDATE.md). Host provisioning now
+requires an explicit `--camera-id ID` and stages the latest published release,
+without flashing. `tools/install_teensy_tools.sh` installs native Linux tools;
+`python3 tools/update_teensy.py --camera-id ID` builds without connected hardware.
+Upload is a separate explicit `--flash --serial USB_SERIAL` operation, followed
+by ID/version verification. Released firmware is selected by the published,
+commit-pinned `tools/firmware-release.json`, never an arbitrary working tree.

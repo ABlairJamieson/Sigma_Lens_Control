@@ -19,6 +19,7 @@ class CameraClient;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
+class QTabWidget;
 
 class DevicePanel : public QWidget
 {
@@ -152,6 +153,12 @@ private:
   QString mConnectedLensEndpoint, mConnectedCameraEndpoint;
   QJsonObject mTelemetrySnapshot, mCameraDiagnostics;
   qint64 mCameraDiagnosticsReceived = 0;
+  QTabWidget* mControlTabs = nullptr;
+  QLabel* mCarrierReason = nullptr;
+  QPushButton* mCarrierRefresh = nullptr;
+  bool mCarrierStale = false;
+  QString mCarrierError;
+  QString mBridgePlatform;
   QLabel* mCarrierReadings = nullptr;
   QPushButton* mCameraPowerOn = nullptr;
   QPushButton* mCameraPowerOff = nullptr;

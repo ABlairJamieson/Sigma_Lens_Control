@@ -41,3 +41,14 @@ and an idle receive buffer. Status includes `Rx` (received UART bytes) and `Pkt`
 The packet regression test executes the actual parser and dispatch methods with
 host-side UART/FSM stubs; run `python3 -m unittest discover -s tests -v` from the
 repository root (g++ is required in addition to the Python test dependencies).
+
+## Published release selection and deployment
+
+Use `tools/update_teensy.py` from main for CM5/BeagleY deployment; see
+`tools/TEENSY_UPDATE.md`. The release manifest currently promotes v2 (2.0.0).
+Publish each future frozen `firmware/vN` branch first, then update
+`tools/firmware-release.json` on main with its version/ref/exact commit and
+supported toolchain. This promotion makes it the updater's latest released
+version; merely creating a draft/development branch does not select it.
+The updater checks the source version and pin, stages an explicit camera ID
+outside this working tree, and does not modify Config.h in the repository.

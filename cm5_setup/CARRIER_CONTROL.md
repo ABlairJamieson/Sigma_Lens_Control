@@ -98,7 +98,7 @@ https://www.ti.com/lit/ds/symlink/tmp117.pdf
 For a fresh v1.1 carrier:
 
 ```sh
-sudo python3 cm5_setup/install.py --sdk ~/ASI_linux_mac_SDK_V1.41 --carrier-v1-1
+sudo python3 cm5_setup/install.py --sdk ~/ASI_linux_mac_SDK_V1.41 --camera-id ID --carrier-v1-1
 ```
 
 Without `--carrier-v1-1`, older boards keep the original setup. The carrier
@@ -165,3 +165,26 @@ QT_QPA_PLATFORM=offscreen ./carrier_control_test
 Bridge tests cover power commands while absent/busy/live, SDK handle reset,
 telemetry with no initialized camera, and per-sensor errors. Qt tests cover
 per-camera power routing/readbacks, disconnect clearing and older bridges.
+
+## Compact per-camera GUI
+
+Each camera has Camera, Lens, Environment, Power/status and Connection sub-tabs.
+The common status and Connect both / Disconnect both buttons remain visible.
+The Lens page includes lens power and focus/aperture controls. Camera exposure,
+acquisition and ASI diagnostics stay together. Power/status shows camera 12 V
+switching, eFuse fault, both voltage/current monitors, and housing TMP117.
+Each page scrolls independently for smaller displays.
+
+Power/status explains why switching is unavailable: camera bridge disconnected,
+live view active, capture/power operation busy, stale telemetry, missing service,
+or an unsupported host. Refresh readings requests a new status on the existing
+camera connection. A disabled power button does not itself mean camera 12 V is off.
+
+Updated bridges advertise `capabilities.platform`, `carrier_power`, and
+`carrier_telemetry`. Platforms are `radxa_cm5`, `beagley_ai`, or `unknown`.
+Carrier responses also carry platform/support information. Recognized BeagleY
+hosts never access the CM5 carrier socket or forward its power commands.
+Older bridges without capabilities are treated conservatively: power remains
+unavailable unless their existing carrier response confirms a running service.
+The new bridge must be deployed/restarted on each host to advertise the new
+platform fields; GUI-only updates cannot change an older remote bridge.
