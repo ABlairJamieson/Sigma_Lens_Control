@@ -372,3 +372,9 @@ Camera 12 V defaults OFF after boot. SigmaControl provides per-camera power
 buttons and voltage/current/temperature readbacks through the existing ASI
 connection on port 5001; no extra port or Teensy firmware change is needed.
 See [carrier setup and protocol](cm5_setup/CARRIER_CONTROL.md).
+
+On the DAQ desktop, launch the frontend with `frontend/run_sigma_control.sh`
+(or `./run_sigma_control.sh` from `frontend`). The launcher clears inherited
+Qt library/plugin search overrides for this process, avoiding conflicts with
+older Qt libraries bundled with WaveDump. It does not change WaveDump or shell
+startup configuration. Build `frontend/SigmaControl` with qmake/make first.
