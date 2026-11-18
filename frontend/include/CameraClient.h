@@ -19,7 +19,9 @@ public:
   bool isConnected() const;
 
   void requestStatus();
-  bool isBusy() const { return mBusy; }
+  void setCameraPower(bool enabled);
+  bool cameraReady() const { return mCameraReady; }
+  bool isBusy() const { return mBusy || mPowerPending; }
   void setCaptureContext(const QJsonObject& context) { mContext = context; }
 
   void captureStream(int exposureUs,
@@ -33,6 +35,8 @@ public:
                      double fNumber = -1.0);
 
 signals:
+  void carrierReceived(const QJsonObject& carrier);
+  void cameraReadyChanged(bool ready);
   void diagnosticsReceived(const QJsonObject& diagnostics);
   void busyChanged(bool busy);
   void connectedChanged(bool connected);
@@ -69,6 +73,8 @@ private:
   QByteArray mRxBuf;
 
   bool mBusy = false;
+  bool mPowerPending = false, mCameraReady = false;
+  QTimer mPowerDeadline;
   QTimer mCaptureDeadline, mDiagnosticsTimer;
   bool mStatusPending = false;
   QJsonObject mContext, mPendingContext, mCaptureHeader;

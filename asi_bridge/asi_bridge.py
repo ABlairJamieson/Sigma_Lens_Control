@@ -55,6 +55,33 @@ def log(msg: str):
     print(f"[asi_bridge] {msg}", flush=True)
 
 
+CARRIER_SOCKET = "/run/sigma-carrier/control.sock"
+
+
+def carrier_request(command="read"):
+    """Use the privileged local GPIO owner; never access hardware from the bridge."""
+    try:
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(2)
+            client.connect(CARRIER_SOCKET)
+            client.sendall(command.encode("ascii") + b"\n")
+            data = bytearray()
+            while not data.endswith(b"\n"):
+                chunk = client.recv(4096)
+                if not chunk:
+                    raise RuntimeError("Carrier service closed without a reply")
+                data.extend(chunk)
+                if len(data) > 65536:
+                    raise RuntimeError("Carrier reply exceeds limit")
+        result = json.loads(data)
+        if not isinstance(result, dict) or "error" in result:
+            raise RuntimeError(str(result.get("error")) if isinstance(result, dict) else "Invalid carrier reply")
+        result["available"] = True
+        return result
+    except (OSError, ValueError, RuntimeError) as exc:
+        return {"available": False, "error": str(exc)}
+
+
 class ASIBridge:
     """
     Phase 1 bridge:
@@ -98,6 +125,9 @@ class ASIBridge:
             return False
         try:
             if self.cam is None:
+                carrier = carrier_request("status")
+                if carrier.get("available") and carrier.get("camera_enabled") is False:
+                    return False
                 try:
                     self.init_camera()
                     log(f"Camera initialized after retry: {self.info.get('Name')}")
@@ -109,6 +139,9 @@ class ASIBridge:
             self.lock.release()
 
     def _initialize_camera(self):
+        carrier = carrier_request("status")
+        if carrier.get("available") and carrier.get("camera_enabled") is False:
+            raise RuntimeError("Camera 12 V is disabled; use camera_power to enable it")
         log(f"init_camera(): sdk_path={self.sdk_path}")
 
         if not os.path.exists(self.sdk_path):
@@ -335,10 +368,14 @@ class ASIBridge:
 
     def status(self):
         log("status(): called")
+        carrier = carrier_request()
+        if carrier.get("available") and carrier.get("camera_enabled") is False and self.cam is not None:
+            self.close_camera()
 
         if self.cam is None:
             log("status(): cam is None -> connected=False")
-            return _ok(cmd="status", connected=False, sdk_path=self.sdk_path, state=self.state, diagnostics=self.diagnostics())
+            return _ok(cmd="status", connected=False, sdk_path=self.sdk_path, state=self.state,
+                       diagnostics=self.diagnostics(), carrier=carrier)
 
         try:
             exp = self.cam.get_control_value(asi.ASI_EXPOSURE)[0]
@@ -350,6 +387,7 @@ class ASIBridge:
 
         resp = _ok(
             cmd="status",
+            carrier=carrier,
             connected=True,
             diagnostics=self.diagnostics(),
             camera_name=self.info.get("Name"),
@@ -484,9 +522,48 @@ class ASIBridge:
 
         return None
 
+    def close_camera(self):
+        """Drop SDK handles before intentionally removing camera power."""
+        camera, self.cam = self.cam, None
+        self.info = None
+        self.controls = None
+        self.live_owner = None
+        self.live_config = None
+        self.video_running = False
+        if camera is not None:
+            try:
+                camera.close()
+            except Exception as exc:
+                log(f"Camera close during power transition: {exc}")
+
+    def camera_power(self, req):
+        enabled = req.get("enabled")
+        if not isinstance(enabled, bool):
+            return _err("enabled must be a JSON boolean", cmd="camera_power")
+        if self.live_owner is not None or self.video_running:
+            return _err("Stop live view before changing camera power", cmd="camera_power")
+        before = carrier_request("status")
+        if not before.get("available"):
+            return _err("Carrier service unavailable: " + before.get("error", "unknown error"),
+                        cmd="camera_power", carrier=before)
+        if before.get("camera_enabled") != enabled:
+            self.close_camera()
+        result = carrier_request("on" if enabled else "off")
+        if not result.get("available"):
+            return _err(result.get("error", "Power command failed"), cmd="camera_power", carrier=result)
+        if result.get("camera_enabled") is not enabled:
+            return _err("Enable GPIO did not reach requested state", cmd="camera_power", carrier=result)
+        return _ok(cmd="camera_power", carrier=result)
+
     def handle_request(self, req: dict, conn: socket.socket):
         cmd = (req.get("cmd") or "").strip().lower()
         log(f"handle_request(): cmd={cmd} req={req}")
+
+        if cmd == "carrier_read":
+            return _ok(cmd="carrier_read", carrier=carrier_request())
+
+        if cmd == "camera_power":
+            return self.camera_power(req)
 
         if cmd == "live_frame":
             return self.live_frame(req, conn)
@@ -606,9 +683,17 @@ def client_thread(bridge: ASIBridge, conn: socket.socket, addr):
                     conn.sendall((json.dumps(_err("Request must be an object")) + "\n").encode("utf-8"))
                     continue
                 try:
-                    if req.get("cmd", "").lower() == "live_frame":
+                    command = req.get("cmd", "")
+                    if not isinstance(command, str):
+                        raise ValueError("cmd must be a string")
+                    command = command.strip().lower()
+                    if command == "carrier_read":
+                        # Telemetry remains available while another client exposes/transfers.
+                        resp = bridge.handle_request(req, conn)
+                    elif command in ("live_frame", "camera_power"):
                         if not bridge.lock.acquire(blocking=False):
-                            resp = _ok(cmd="live_frame", busy=True)
+                            resp = (_ok(cmd="live_frame", busy=True) if command == "live_frame"
+                                    else _err("Camera busy; power unchanged", cmd="camera_power"))
                         else:
                             try:
                                 resp = bridge.handle_request(req, conn)

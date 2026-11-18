@@ -362,3 +362,13 @@ python3 -m unittest discover -s tests -v
 # Build/run frontend/tests/environment_history_test.pro as documented above;
 # it also checks live video decoding, freezing, fullscreen, capture/resume, and sidecars.
 ```
+
+### CM5 carrier v1.1 camera power and telemetry
+
+The optional v1.1 carrier service owns camera 12 V enable and reads two INA226
+monitors plus one J602 TMP117 at 0x48. Provision with
+`sudo python3 cm5_setup/install.py --sdk PATH_TO_SDK --carrier-v1-1`.
+Camera 12 V defaults OFF after boot. SigmaControl provides per-camera power
+buttons and voltage/current/temperature readbacks through the existing ASI
+connection on port 5001; no extra port or Teensy firmware change is needed.
+See [carrier setup and protocol](cm5_setup/CARRIER_CONTROL.md).

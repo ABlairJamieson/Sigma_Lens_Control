@@ -13,6 +13,8 @@
 #include <QPlainTextEdit>
 #include <QLabel>
 #include <QToolButton>
+#include <QPushButton>
+#include <QHBoxLayout>
 
 
 static QString exposureToFriendlyString(double ms)
@@ -49,6 +51,35 @@ DevicePanel::DevicePanel(QWidget* parent)
     mCam(new CameraClient(this))
 {
   ui->setupUi(this);
+  auto carrierBox = new QGroupBox("Camera power and housing", this);
+  auto carrierLayout = new QVBoxLayout(carrierBox);
+  mCarrierReadings = new QLabel("Connect camera bridge for power and housing readings", carrierBox);
+  mCarrierReadings->setObjectName("carrierReadings");
+  mCarrierReadings->setTextFormat(Qt::PlainText);
+  mCarrierReadings->setWordWrap(true);
+  carrierLayout->addWidget(mCarrierReadings);
+  auto powerButtons = new QHBoxLayout;
+  mCameraPowerOn = new QPushButton("Camera 12 V ON", carrierBox);
+  mCameraPowerOn->setObjectName("cameraPowerOn");
+  mCameraPowerOff = new QPushButton("Camera 12 V OFF", carrierBox);
+  mCameraPowerOff->setObjectName("cameraPowerOff");
+  powerButtons->addWidget(mCameraPowerOn);
+  powerButtons->addWidget(mCameraPowerOff);
+  carrierLayout->addLayout(powerButtons);
+  ui->verticalLayout->insertWidget(2, carrierBox);
+  connect(mCameraPowerOn, &QPushButton::clicked, this, [this] { mCam->setCameraPower(true); });
+  connect(mCameraPowerOff, &QPushButton::clicked, this, [this] { mCam->setCameraPower(false); });
+  connect(mCam, &CameraClient::carrierReceived, this, &DevicePanel::displayCarrier);
+  connect(mCam, &CameraClient::cameraReadyChanged, this, [this](bool ready) {
+    emit cameraLedStateChanged(mSlotIndex1, cameraLedState());
+    ui->btn_capture->setEnabled(ready && !mCam->isBusy());
+    ui->value_cameraState->setText(ready ? "Ready" : (cameraConnected() ? "Not ready" : "Disconnected"));
+  });
+  connect(mCam, &CameraClient::busyChanged, this, [this](bool) {
+    updateCarrierControls();
+    ui->btn_capture->setEnabled(mCam->cameraReady() && !mCam->isBusy());
+  });
+  updateCarrierControls();
   auto diagnosticsBox = new QGroupBox("ASI camera diagnostics", this);
   auto diagnosticsLayout = new QVBoxLayout(diagnosticsBox);
   mCameraTemperature = new QLabel("Camera disconnected", diagnosticsBox);
@@ -56,6 +87,13 @@ DevicePanel::DevicePanel(QWidget* parent)
   auto staleTimer = new QTimer(this);
   staleTimer->start(5000);
   connect(staleTimer, &QTimer::timeout, this, [this] {
+    if (cameraConnected() && mCarrierReceivedAt &&
+        QDateTime::currentMSecsSinceEpoch() - mCarrierReceivedAt > 15000) {
+      mCarrierAvailable = false;
+      updateCarrierControls();
+      if (!mCarrierReadings->text().startsWith("STALE"))
+        mCarrierReadings->setText("STALE — no carrier readback for 15 seconds\n" + mCarrierReadings->text());
+    }
     if (cameraConnected() && !mCameraDiagnostics.isEmpty() &&
         QDateTime::currentMSecsSinceEpoch() - mCameraDiagnosticsReceived > 15000 &&
         !mCameraTemperature->text().startsWith("STALE"))
@@ -78,6 +116,8 @@ DevicePanel::DevicePanel(QWidget* parent)
   connect(mCam, &CameraClient::diagnosticsReceived, this, [this](const QJsonObject& d) {
     mCameraDiagnostics = d;
     mCameraDiagnosticsReceived = QDateTime::currentMSecsSinceEpoch();
+    mCarrierLive = d.value("live_active").toBool(false);
+    updateCarrierControls();
     auto number = [&d](const QString& key, const QString& unit) {
       return d.value(key).isDouble() ? QString::number(d.value(key).toDouble(), 'f', 1) + unit : QString("unavailable");
     };
@@ -286,7 +326,8 @@ DevicePanel::LedState DevicePanel::lensLedState() const
 
 DevicePanel::LedState DevicePanel::cameraLedState() const
 {
-  return cameraConnected() ? LedState::Ready : LedState::Disconnected;
+  if (!cameraConnected()) return LedState::Disconnected;
+  return mCam->cameraReady() ? LedState::Ready : LedState::NotReady;
 }
 
 void DevicePanel::setLensUiConnected(bool en)
@@ -308,12 +349,51 @@ void DevicePanel::setLensUiConnected(bool en)
   ui->btn_apertureSet->setEnabled(false);
 }
 
+void DevicePanel::updateCarrierControls()
+{
+  const bool allowed = mCam && mCam->isConnected() && mCarrierAvailable && !mCam->isBusy() && !mCarrierLive;
+  mCameraPowerOn->setEnabled(allowed);
+  mCameraPowerOff->setEnabled(allowed);
+}
+
+void DevicePanel::displayCarrier(const QJsonObject& carrier)
+{
+  mCarrierReceivedAt = QDateTime::currentMSecsSinceEpoch();
+  mCarrierAvailable = carrier.value("available").toBool(false) &&
+                      carrier.value("camera_enabled").isBool() &&
+                      carrier.value("camera_fault_active").isBool();
+  updateCarrierControls();
+  if (!mCarrierAvailable) {
+    mCarrierReadings->setText("Carrier unavailable: " + carrier.value("error").toString("No valid power readback"));
+    return;
+  }
+  auto rail = [&carrier](const QString& key, const QString& label) {
+    const auto value = carrier.value(key).toObject();
+    if (value.contains("error")) return label + ": " + value.value("error").toString();
+    if (!value.value("load_V").isDouble() || !value.value("current_A").isDouble()) return label + ": awaiting measurement";
+    return QString("%1: %2 V | %3 A").arg(label)
+      .arg(value.value("load_V").toDouble(), 0, 'f', 3)
+      .arg(value.value("current_A").toDouble(), 0, 'f', 3);
+  };
+  const auto temp = carrier.value("temperature").toObject();
+  const QString temperature = temp.value("temperature_C").isDouble()
+    ? QString::number(temp.value("temperature_C").toDouble(), 'f', 2) + " °C"
+    : temp.value("error").toString("awaiting measurement");
+  mCarrierReadings->setText(QString("Camera 12 V enable: %1 | Fault: %2\n%3\n%4\nHousing TMP117: %5\nUpdated: %6")
+    .arg(carrier.value("camera_enabled").toBool() ? "ON" : "OFF")
+    .arg(carrier.value("camera_fault_active").toBool() ? "ACTIVE" : "none")
+    .arg(rail("camera_12V", "Camera supply"))
+    .arg(rail("system_5V", "CM5/carrier 5 V"))
+    .arg(temperature).arg(QDateTime::currentDateTime().toString(Qt::ISODateWithMs)));
+}
+
 void DevicePanel::setCameraUiConnected(bool en)
 {
   ui->btn_cameraConnect->setEnabled(!en);
   ui->btn_cameraDisconnect->setEnabled(en);
   ui->btn_cameraStatus->setEnabled(en);
-  ui->btn_capture->setEnabled(en);
+  ui->btn_capture->setEnabled(en && mCam->cameraReady() && !mCam->isBusy());
+  updateCarrierControls();
 
   ui->value_cameraState->setText(en ? "Connected" : "Disconnected");
 }
@@ -700,6 +780,10 @@ void DevicePanel::onCameraConnectedChanged(bool connected)
   mConnectedCameraEndpoint = connected ? cameraEndpoint() : QString();
   if (!connected) {
     mCameraDiagnostics = {};
+    mCarrierAvailable = false;
+    mCarrierLive = false;
+    mCarrierReceivedAt = 0;
+    mCarrierReadings->setText("Disconnected — carrier readings cleared");
     mCameraTemperature->setText("Camera disconnected — previous readings cleared");
     mCameraDetails->clear();
   } else {
@@ -708,7 +792,7 @@ void DevicePanel::onCameraConnectedChanged(bool connected)
   setCameraUiConnected(connected);
   setOverallStatusText();
 
-  emit cameraLedStateChanged(mSlotIndex1, connected ? LedState::Ready : LedState::Disconnected);
+  emit cameraLedStateChanged(mSlotIndex1, cameraLedState());
   emit statusMessage(mSlotIndex1, QString("Camera %1").arg(connected ? "connected" : "disconnected"));
 }
 

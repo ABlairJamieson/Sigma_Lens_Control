@@ -77,6 +77,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sdk', type=Path, required=True,
                         help='Extracted ASI_linux_mac_SDK_V1.41 directory')
+    parser.add_argument('--carrier-v1-1', action='store_true',
+                        help='Install v1.1 camera power/INA226/TMP117 service (camera defaults OFF)')
     args = parser.parse_args()
     require(os.geteuid() == 0, 'Run using sudo python3 cm5_setup/install.py --sdk ...')
     require(platform.machine() == 'aarch64', 'Requires 64-bit ARM Linux')
@@ -136,6 +138,8 @@ def main():
             f'ExecStart={python} {directory / (bridge + "_bridge.py")}\n'
             'Restart=always\nRestartSec=3\n\n'
             '[Install]\nWantedBy=multi-user.target\n')
+    if args.carrier_v1_1:
+        run(sys.executable, ROOT / 'cm5_setup/install_carrier_control.py')
     run('systemctl', 'daemon-reload')
     run('systemctl', 'disable', '--now', 'teensy-bridge.service', 'asi-bridge.service')
     run('systemctl', 'enable', '--now', 'ssh.service')

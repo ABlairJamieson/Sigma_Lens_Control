@@ -15,6 +15,14 @@ CameraClient::CameraClient(QObject* parent)
   : QObject(parent),
     mSock(new QTcpSocket(this))
 {
+  mPowerDeadline.setSingleShot(true);
+  connect(&mPowerDeadline, &QTimer::timeout, this, [this] {
+    mPowerPending = false;
+    emit busyChanged(mBusy);
+    emit carrierReceived(QJsonObject{{"available", false}, {"error", "Power reply timed out; state unknown"}});
+    emit statusMessage("Power reply timed out; checking actual state");
+    requestStatus();
+  });
   mDiagnosticsTimer.setInterval(5000);
   connect(&mDiagnosticsTimer, &QTimer::timeout, this, &CameraClient::requestStatus);
   mCaptureDeadline.setSingleShot(true);
@@ -70,6 +78,10 @@ bool CameraClient::connectToEndpoint(const QString& endpoint)
 void CameraClient::disconnect()
 {
   mDiagnosticsTimer.stop();
+  mPowerDeadline.stop();
+  mPowerPending = false;
+  mCameraReady = false;
+  emit cameraReadyChanged(false);
   mStatusPending = false;
   if (mSock && mSock->isOpen())
     mSock->close();
@@ -100,11 +112,23 @@ void CameraClient::sendJsonLine(const QJsonObject& obj)
 
 void CameraClient::requestStatus()
 {
-  if (!isConnected() || mBusy || mStatusPending) return;
+  if (!isConnected() || isBusy() || mStatusPending) return;
   mStatusPending = true;
   QJsonObject obj;
   obj["cmd"] = "status";
   sendJsonLine(obj);
+}
+
+void CameraClient::setCameraPower(bool enabled)
+{
+  if (!isConnected() || isBusy()) {
+    emit statusMessage("Cannot change camera power while disconnected or busy");
+    return;
+  }
+  mPowerPending = true;
+  emit busyChanged(true);
+  mPowerDeadline.start(10000);
+  sendJsonLine(QJsonObject{{"cmd", "camera_power"}, {"enabled", enabled}});
 }
 
 void CameraClient::captureStream(int exposureUs,
@@ -117,7 +141,7 @@ void CameraClient::captureStream(int exposureUs,
                                  int apertureRaw,
                                  double fNumber)
 {
-  if (!isConnected() || mBusy) { emit statusMessage("Camera disconnected or capture already in progress"); return; }
+  if (!isConnected() || isBusy() || !mCameraReady) { emit statusMessage("Camera not ready or busy"); return; }
   mPendingContext = mContext;
   mBusy = true; emit busyChanged(true);
   mCaptureDeadline.start(exposureUs/1000 + 60000);
@@ -161,6 +185,10 @@ void CameraClient::onErrorOccurred(QAbstractSocket::SocketError)
 void CameraClient::onDisconnected()
 {
   mDiagnosticsTimer.stop();
+  mPowerDeadline.stop();
+  mPowerPending = false;
+  mCameraReady = false;
+  emit cameraReadyChanged(false);
   mStatusPending = false;
   emit statusMessage("Camera TCP disconnected");
   disconnect();
@@ -337,6 +365,23 @@ void CameraClient::onReadyRead()
     const bool ok = obj.value("ok").toBool(false);
 
     if (cmd == "status" || obj.contains("connected")) mStatusPending = false;
+    if (cmd == "status") {
+      mCameraReady = obj.value("connected").toBool(false);
+      emit cameraReadyChanged(mCameraReady);
+      if (!obj.value("carrier").isObject())
+        emit carrierReceived(QJsonObject{{"available", false}, {"error", "Bridge has no carrier support"}});
+    }
+    if (obj.value("carrier").isObject()) emit carrierReceived(obj.value("carrier").toObject());
+    if (cmd == "camera_power") {
+      mPowerDeadline.stop();
+      mPowerPending = false;
+      if (ok) { mCameraReady = false; emit cameraReadyChanged(false); }
+      emit busyChanged(mBusy);
+      emit statusMessage(ok ? "Camera power command acknowledged; checking readbacks"
+                            : "Camera power unchanged/error: " + obj.value("error").toString());
+      requestStatus();
+      continue;
+    }
     if (obj.value("diagnostics").isObject())
       emit diagnosticsReceived(obj.value("diagnostics").toObject());
 

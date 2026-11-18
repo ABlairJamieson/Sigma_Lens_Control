@@ -70,3 +70,15 @@ Do not provision experimental controller resets, sigma-usb-latebind overlays,
 or ASI UsbHubReset pulses. None reliably recovered SuperSpeed in these tests.
 The bridge retries failed initial camera discovery every five seconds without
 needing a client connection; retries never reset USB or change camera power.
+
+CARRIER v1.1 POWER + TELEMETRY (optional; new power carrier only)
+For the next v1.1 carrier, replace the installer invocation in step 6 with:
+  sudo python3 cm5_setup/install.py --sdk ~/ASI_linux_mac_SDK_V1.41 --carrier-v1-1
+For an already-installed CM5, the offline carrier-only installation is:
+  sudo python3 cm5_setup/install_carrier_control.py
+The carrier service is enabled at boot and defaults camera 12 V OFF.
+Enable asi-bridge after commissioning as in step 7. SigmaControl connects to
+its existing camera port 5001 and can turn camera 12 V ON, read INA226 voltage/
+current for camera 12 V and carrier 5 V, and read the J602 TMP117 at 0x48.
+No Teensy firmware/protocol change or extra TCP port is required.
+See cm5_setup/CARRIER_CONTROL.md for wiring, protocol, deployment and tests.

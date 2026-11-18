@@ -18,6 +18,7 @@ class LensClient;
 class CameraClient;
 class QLabel;
 class QPlainTextEdit;
+class QPushButton;
 
 class DevicePanel : public QWidget
 {
@@ -125,6 +126,8 @@ private:
   void setLensUiConnected(bool en);
   void setCameraUiConnected(bool en);
   void updateLensControlsForState();
+  void updateCarrierControls();
+  void displayCarrier(const QJsonObject& carrier);
 
   QString makeCapturePrefix() const;
 
@@ -149,6 +152,11 @@ private:
   QString mConnectedLensEndpoint, mConnectedCameraEndpoint;
   QJsonObject mTelemetrySnapshot, mCameraDiagnostics;
   qint64 mCameraDiagnosticsReceived = 0;
+  QLabel* mCarrierReadings = nullptr;
+  QPushButton* mCameraPowerOn = nullptr;
+  QPushButton* mCameraPowerOff = nullptr;
+  bool mCarrierAvailable = false, mCarrierLive = false;
+  qint64 mCarrierReceivedAt = 0;
   QLabel* mCameraTemperature = nullptr;
   QPlainTextEdit* mCameraDetails = nullptr;
   QString mTelemetryTimestamp;
