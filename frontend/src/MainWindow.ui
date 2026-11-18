@@ -119,49 +119,89 @@
        <widget class="QWidget" name="tab_slot1">
         <attribute name="title"><string>Slot 1</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot1">
-         <item><widget class="DevicePanel" name="devicePanel1"/></item>
+         <item>
+          <widget class="QScrollArea" name="scroll_slot1">
+           <property name="widgetResizable"><bool>true</bool></property>
+           <widget class="DevicePanel" name="devicePanel1"/>
+          </widget>
+         </item>
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot2">
         <attribute name="title"><string>Slot 2</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot2">
-         <item><widget class="DevicePanel" name="devicePanel2"/></item>
+         <item>
+          <widget class="QScrollArea" name="scroll_slot2">
+           <property name="widgetResizable"><bool>true</bool></property>
+           <widget class="DevicePanel" name="devicePanel2"/>
+          </widget>
+         </item>
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot3">
         <attribute name="title"><string>Slot 3</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot3">
-         <item><widget class="DevicePanel" name="devicePanel3"/></item>
+         <item>
+          <widget class="QScrollArea" name="scroll_slot3">
+           <property name="widgetResizable"><bool>true</bool></property>
+           <widget class="DevicePanel" name="devicePanel3"/>
+          </widget>
+         </item>
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot4">
         <attribute name="title"><string>Slot 4</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot4">
-         <item><widget class="DevicePanel" name="devicePanel4"/></item>
+         <item>
+          <widget class="QScrollArea" name="scroll_slot4">
+           <property name="widgetResizable"><bool>true</bool></property>
+           <widget class="DevicePanel" name="devicePanel4"/>
+          </widget>
+         </item>
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot5">
         <attribute name="title"><string>Slot 5</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot5">
-         <item><widget class="DevicePanel" name="devicePanel5"/></item>
+         <item>
+          <widget class="QScrollArea" name="scroll_slot5">
+           <property name="widgetResizable"><bool>true</bool></property>
+           <widget class="DevicePanel" name="devicePanel5"/>
+          </widget>
+         </item>
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot6">
         <attribute name="title"><string>Slot 6</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot6">
-         <item><widget class="DevicePanel" name="devicePanel6"/></item>
+         <item>
+          <widget class="QScrollArea" name="scroll_slot6">
+           <property name="widgetResizable"><bool>true</bool></property>
+           <widget class="DevicePanel" name="devicePanel6"/>
+          </widget>
+         </item>
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot7">
         <attribute name="title"><string>Slot 7</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot7">
-         <item><widget class="DevicePanel" name="devicePanel7"/></item>
+         <item>
+          <widget class="QScrollArea" name="scroll_slot7">
+           <property name="widgetResizable"><bool>true</bool></property>
+           <widget class="DevicePanel" name="devicePanel7"/>
+          </widget>
+         </item>
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot8">
         <attribute name="title"><string>Slot 8</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot8">
-         <item><widget class="DevicePanel" name="devicePanel8"/></item>
+         <item>
+          <widget class="QScrollArea" name="scroll_slot8">
+           <property name="widgetResizable"><bool>true</bool></property>
+           <widget class="DevicePanel" name="devicePanel8"/>
+          </widget>
+         </item>
         </layout>
        </widget>
       </widget>
