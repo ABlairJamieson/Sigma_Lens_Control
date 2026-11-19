@@ -103,6 +103,13 @@ private slots:
     QVERIFY2(gain->mapTo(&win,QPoint(gain->width(),0)).x()<=win.width(),"Gain control clipped");
     auto cancel=win.findChild<QPushButton*>("autofocusCancel");
     QVERIFY2(cancel->mapTo(&win,QPoint(cancel->width(),0)).x()<=win.width(),"Focus controls clipped");
+    for (QWidget* control : {static_cast<QWidget*>(gain),static_cast<QWidget*>(cancel)}) {
+      const QRect original(control->mapTo(&win,QPoint()),control->size());
+      QRect visible=original;
+      for (QWidget* parent=control->parentWidget();parent && parent!=&win;parent=parent->parentWidget())
+        visible=visible.intersected(QRect(parent->mapTo(&win,QPoint()),parent->size()));
+      QVERIFY2(visible.width()>=original.width()-2,"Live control is clipped by its parent pane");
+    }
     if(qEnvironmentVariableIsSet("LIVE_SCREENSHOT")) QVERIFY(win.grab().save(qEnvironmentVariable("LIVE_SCREENSHOT")));
   }
   void fullAutofocusWorkflowWithSimulatedLensAndCamera() {
