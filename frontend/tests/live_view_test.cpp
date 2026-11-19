@@ -122,6 +122,13 @@ private slots:
         visible=visible.intersected(QRect(parent->mapTo(&win,QPoint()),parent->size()));
       QVERIFY2(visible.width()>=original.width()-2,"Live control is clipped by its parent pane");
     }
+    win.resize(1700,1100); QTest::qWait(30);
+    auto status=win.findChild<QLabel*>("liveStatus");
+    status->setText("Autofocus cancelled\n0.1 fps | 10 ms / gain 0 | sensor 2392 × 1596 | sharpness 74139.1");
+    QTest::qWait(30);
+    auto preview=win.findChild<QLabel*>("label_mainPreview");
+    QVERIFY2(preview->height()>preview->parentWidget()->height()/2,"Preview image does not receive spare vertical space");
+    QVERIFY2(status->height()<100,"Live status text expands into the image area");
     if(qEnvironmentVariableIsSet("LIVE_SCREENSHOT")) QVERIFY(win.grab().save(qEnvironmentVariable("LIVE_SCREENSHOT")));
   }
   void previewClickSelectsSensorRegionWithoutOpeningWindows() {

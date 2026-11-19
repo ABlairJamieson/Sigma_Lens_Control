@@ -150,7 +150,10 @@ MainWindow::MainWindow(QWidget *parent)
   ui->verticalLayout_previewBox->insertLayout(2,focusRow);
   mLiveStatus = new QLabel("Live view idle — exposure limited to 2 s",this);
   mLiveStatus->setObjectName("liveStatus"); mLiveStatus->setWordWrap(true);
+  mLiveStatus->setSizePolicy(QSizePolicy::Preferred,QSizePolicy::Maximum);
+  mLiveStatus->setAlignment(Qt::AlignLeft | Qt::AlignTop);
   ui->verticalLayout_previewBox->insertWidget(3,mLiveStatus);
+  ui->verticalLayout_previewBox->setStretchFactor(ui->label_mainPreview,1);
   connect(mFollowCapture,&QCheckBox::toggled,this,[this] { updateLiveSettings(); });
   connect(mLiveExposure,qOverload<int>(&QSpinBox::valueChanged),this,[this] { updateLiveSettings(); });
   connect(mLiveGain,qOverload<int>(&QSpinBox::valueChanged),this,[this] { updateLiveSettings(); });
