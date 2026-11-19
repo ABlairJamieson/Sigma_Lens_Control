@@ -30,6 +30,9 @@ void LiveViewClient::setSettings(int exposureUs, int gain) {
   mExposure = std::clamp(exposureUs, 1, 2000000); mGain = gain;
 }
 void LiveViewClient::setFocusView(bool focus) { mFocusView = focus; }
+void LiveViewClient::setFocusCenter(const QPointF& center) {
+  mFocusCenter = QPointF(std::clamp(center.x(),0.0,1.0),std::clamp(center.y(),0.0,1.0));
+}
 void LiveViewClient::setFocusToken(const QString& token) { mFocusToken = token; }
 void LiveViewClient::setTargetSize(const QSize& size) {
   mSize = QSize(std::clamp(size.width(), 160, 3840), std::clamp(size.height(), 120, 2160));
@@ -37,7 +40,7 @@ void LiveViewClient::setTargetSize(const QSize& size) {
 void LiveViewClient::requestFrame() {
   if (!mActive || mWaiting || mSocket.state() != QAbstractSocket::ConnectedState) return;
   const QJsonObject request{{"cmd", "live_frame"}, {"max_width", mSize.width()}, {"max_height", mSize.height()},
-                            {"jpeg_quality", 80}, {"exposure_us", mExposure}, {"gain", mGain}, {"view_mode", mFocusView ? "focus" : "full"}, {"focus_token", mFocusToken}};
+                            {"jpeg_quality", 80}, {"exposure_us", mExposure}, {"gain", mGain}, {"view_mode", mFocusView ? "focus" : "full"}, {"focus_token", mFocusToken}, {"focus_x", mFocusCenter.x()}, {"focus_y", mFocusCenter.y()}};
   mSocket.write(QJsonDocument(request).toJson(QJsonDocument::Compact)+"\n");
   mWaiting = true; mRequestTime.restart(); mDeadline.start(30000);
 }

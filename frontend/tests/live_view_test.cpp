@@ -8,9 +8,11 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QLabel>
+#include <QDialog>
 #include <QLineEdit>
 #include <QTemporaryDir>
 #include <QSettings>
+#include <QTabWidget>
 #include <functional>
 #include "LiveViewClient.h"
 #include "MainWindow.h"
@@ -53,6 +55,14 @@ public:
       header["view_mode"]=frames.last()["view_mode"];
       header["focus_score"]=focusScore ? focusScore() : 100;
       header["mean_level"]=100; header["saturated_fraction"]=0.0;
+      const double cx=frames.last().value("focus_x").toDouble(.5), cy=frames.last().value("focus_y").toDouble(.5);
+      const int x=int(std::clamp(cx*9576-512,0.0,8552.0))/8*8;
+      const int y=int(std::clamp(cy*6388-384,0.0,5620.0))/2*2;
+      QJsonObject roi{{"x",x},{"y",y},{"width",1024},{"height",768}};
+      auto region=frames.last()["view_mode"]=="focus" ? roi :
+        QJsonObject{{"x",0},{"y",0},{"width",9576},{"height",6388}};
+      region["sensor_width"]=9576; region["sensor_height"]=6388;
+      header["focus_roi"]=roi; header["frame_region"]=region;
       header["sensor_w"]=1024; header["sensor_h"]=768;
     }
     liveSocket->write(QJsonDocument(header).toJson(QJsonDocument::Compact)+"\n"+jpg);
@@ -73,7 +83,7 @@ private slots:
     live.start(server.endpoint(),10000,10);
     QTRY_COMPARE(server.frames.size(),1);
     QCOMPARE(server.frames[0]["exposure_us"].toInt(),10000);
-    live.setSettings(25000,70); live.setFocusView(true); live.setFocusToken("new-position");
+    live.setSettings(25000,70); live.setFocusView(true); live.setFocusToken("new-position"); live.setFocusCenter(QPointF(.75,.25));
     server.reply(); QTRY_COMPARE(server.frames.size(),2);
     QCOMPARE(images.count(),1); QCOMPARE(metadata.count(),1);
     QCOMPARE(server.connections,1);
@@ -81,6 +91,8 @@ private slots:
     QCOMPARE(server.frames[1]["gain"].toInt(),70);
     QCOMPARE(server.frames[1]["view_mode"].toString(),QString("focus"));
     QCOMPARE(server.frames[1]["focus_token"].toString(),QString("new-position"));
+    QCOMPARE(server.frames[1]["focus_x"].toDouble(),.75);
+    QCOMPARE(server.frames[1]["focus_y"].toDouble(),.25);
     live.stop();
   }
   void compactControlsAndFollowCapture() {
@@ -112,6 +124,69 @@ private slots:
     }
     if(qEnvironmentVariableIsSet("LIVE_SCREENSHOT")) QVERIFY(win.grab().save(qEnvironmentVariable("LIVE_SCREENSHOT")));
   }
+  void previewClickSelectsSensorRegionWithoutOpeningWindows() {
+    PreviewServer server; server.automatic=true; server.focusCapable=true;
+    MainWindow win; win.resize(1024,700); win.show();
+    DevicePanel* panel=nullptr;
+    for(auto p:win.findChildren<DevicePanel*>()) if(p->slotIndex()==1) panel=p;
+    panel->findChild<QLineEdit*>("edit_host")->setText("127.0.0.1");
+    panel->findChild<QSpinBox*>("spin_cameraPort")->setValue(server.serverPort());
+    QVERIFY(QMetaObject::invokeMethod(panel,"onCameraConnectClicked"));
+    win.findChild<QCheckBox*>("check_liveView")->setChecked(true);
+    QTRY_VERIFY(server.frames.size()>2);
+    auto preview=win.findChild<QLabel*>("label_mainPreview");
+    auto point=[&](double x,double y) {
+      const auto content=preview->contentsRect();
+      const QSize shown=QSize(320,240).scaled(content.size(),Qt::KeepAspectRatio);
+      return QPoint(content.x()+(content.width()-shown.width())/2+qRound(shown.width()*x),
+                    content.y()+(content.height()-shown.height())/2+qRound(shown.height()*y));
+    };
+    QTest::mouseClick(preview,Qt::LeftButton,Qt::NoModifier,point(.75,.25));
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_x"].toDouble()-.75)<.01);
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_y"].toDouble()-.25)<.01);
+    QVERIFY(!win.findChild<QDialog*>("fullscreenPreview"));
+    const auto selected=server.frames.last();
+    // Preview has side margins at this window size; margins do not select pixels.
+    QTest::mouseClick(preview,Qt::LeftButton,Qt::NoModifier,preview->contentsRect().topLeft());
+    QTest::qWait(50);
+    QCOMPARE(server.frames.last()["focus_x"],selected["focus_x"]);
+    QTest::mouseDClick(preview,Qt::LeftButton,Qt::NoModifier,point(.75,.25));
+    QVERIFY(!win.findChild<QDialog*>("fullscreenPreview"));
+    win.findChild<QCheckBox*>("focusDetail")->setChecked(true);
+    QTRY_COMPARE(server.frames.last()["view_mode"].toString(),QString("focus"));
+    QTest::qWait(60); // allow the crop metadata to arrive before another click
+    const double cx=selected["focus_x"].toDouble(), cy=selected["focus_y"].toDouble();
+    const double left=int(std::clamp(cx*9576-512,0.0,8552.0))/8*8;
+    const double top=int(std::clamp(cy*6388-384,0.0,5620.0))/2*2;
+    QTest::mouseClick(preview,Qt::LeftButton,Qt::NoModifier,point(.75,.25));
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_x"].toDouble()-(left+768)/9576)<.001);
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_y"].toDouble()-(top+192)/6388)<.001);
+    QTest::mouseClick(preview,Qt::RightButton,Qt::NoModifier,point(.5,.5));
+    QTRY_COMPARE(server.frames.last()["focus_x"].toDouble(),.5);
+    QTRY_COMPARE(server.frames.last()["focus_y"].toDouble(),.5);
+    win.findChild<QCheckBox*>("focusDetail")->setChecked(false); QTest::qWait(60);
+    win.findChild<QPushButton*>("btn_fullscreen")->click();
+    auto fullscreen=win.findChild<QDialog*>("fullscreenPreview"); QVERIFY(fullscreen && fullscreen->isVisible());
+    QTest::qWait(60);
+    auto enlarged=win.findChild<QLabel*>("fullscreenPreviewImage"); QVERIFY(enlarged);
+    const QSize fullShown=QSize(320,240).scaled(enlarged->contentsRect().size(),Qt::KeepAspectRatio);
+    const QPoint fullPoint((enlarged->width()-fullShown.width())/2+qRound(fullShown.width()*.2),
+                            (enlarged->height()-fullShown.height())/2+qRound(fullShown.height()*.7));
+    QTest::mouseClick(enlarged,Qt::LeftButton,Qt::NoModifier,fullPoint);
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_x"].toDouble()-.2)<.01);
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_y"].toDouble()-.7)<.01);
+    QTest::keyClick(fullscreen,Qt::Key_Escape); QTRY_VERIFY(!fullscreen->isVisible());
+    auto tabs=win.findChild<QTabWidget*>("tabWidget_devices");
+    tabs->setCurrentIndex(1); tabs->setCurrentIndex(0);
+    win.findChild<QCheckBox*>("check_liveView")->setChecked(true);
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_x"].toDouble()-.2)<.01);
+    if(qEnvironmentVariableIsSet("ROI_SCREENSHOT")) {
+      win.findChild<QCheckBox*>("focusDetail")->setChecked(false); QTest::qWait(60);
+      QTest::mouseClick(preview,Qt::LeftButton,Qt::NoModifier,point(.75,.25)); QTest::qWait(60);
+      QVERIFY(win.grab().save(qEnvironmentVariable("ROI_SCREENSHOT")));
+    }
+    win.findChild<QCheckBox*>("check_liveView")->setChecked(false);
+  }
   void fullAutofocusWorkflowWithSimulatedLensAndCamera() {
     PreviewServer server; server.automatic=true; server.focusCapable=true;
     int position=9000;
@@ -136,11 +211,22 @@ private slots:
     auto lens=panel->findChild<LensClient*>();
     QVERIFY(lens->connectToEndpoint(QString("tcp:127.0.0.1:%1").arg(lensServer.serverPort())));
     lens->telemetryUpdated({{"ID","7"},{"S","RegularMessaging"},{"F","9000"}});
+    win.show();
+    win.findChild<QCheckBox*>("check_liveView")->setChecked(true);
+    QTRY_VERIFY(server.frames.size()>2);
+    auto preview=win.findChild<QLabel*>("label_mainPreview");
+    const QSize shown=QSize(320,240).scaled(preview->contentsRect().size(),Qt::KeepAspectRatio);
+    const QPoint roiPoint(preview->contentsRect().x()+(preview->contentsRect().width()-shown.width())/2+qRound(shown.width()*.75),
+                           preview->contentsRect().y()+(preview->contentsRect().height()-shown.height())/2+qRound(shown.height()*.25));
+    QTest::mouseClick(preview,Qt::LeftButton,Qt::NoModifier,roiPoint);
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_x"].toDouble()-.75)<.01);
     win.findChild<QSpinBox*>("autofocusRadius")->setValue(64);
     auto start=win.findChild<QPushButton*>("autofocusStart"); start->click();
     QVERIFY(!start->isEnabled());
+    QTest::mouseClick(preview,Qt::RightButton,Qt::NoModifier,roiPoint); // locked during AF
     QTRY_VERIFY_WITH_TIMEOUT(win.findChild<QLabel*>("liveStatus")->text().contains("Autofocus complete"),15000);
     QCOMPARE(position,9020); QVERIFY(start->isEnabled());
+    QVERIFY(std::abs(server.frames.last()["focus_x"].toDouble()-.75)<.01);
     QVERIFY(!panel->cameraBusy());
     QVERIFY(!win.findChild<QCheckBox*>("focusDetail")->isChecked());
     win.findChild<QCheckBox*>("check_liveView")->setChecked(false);

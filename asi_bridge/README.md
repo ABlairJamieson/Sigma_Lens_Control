@@ -366,13 +366,13 @@ as part of normal provisioning.
 
 Live exposure/gain changes no longer restart video; unchanged controls are cached.
 `live_frame` accepts `view_mode: "full"` (default, binned full field) or `"focus"`
-(centred unbinned ROI up to 1024×768, aligned to sensor requirements). Optional
+(unbinned ROI up to 1024×768, aligned to sensor requirements). Optional
 `focus_token` is a string up to 80 characters: a new nonempty token restarts the
 video stream and discards two startup frames. Retry budgets persist across SDK
 timeouts. Use a unique token after each acknowledged/settled lens move.
 
 Additional response fields: `view_mode`, `focus_token`, `focus_score` (Tenengrad
-energy from the central 80% of an at-most 1024×768 patch before resize/JPEG), `mean_level`,
+energy from the central 80% of the selected ROI before resize/JPEG; full view may be binned), `mean_level`,
 `saturated_fraction`, sensor ROI dimensions `sensor_w`, `sensor_h`, and
 `acquisition_ms`/`processing_ms` for SDK read and image-processing times.
 Exposure/gain report SDK-confirmed control values; an already queued sensor frame
@@ -382,3 +382,11 @@ may still reflect preceding settings. Frames are grayscale RAW8-to-JPEG as befor
 SDK, allowing host-only power/readbacks while ASI is disconnected or capturing.
 The GUI uses a separate connection on the same port; no new port is opened.
 See [frontend operation and testing](../frontend/LIVE_VIEW.md).
+
+Selectable focus ROI: `focus_x`, `focus_y` are finite normalized sensor coordinates
+in [0,1], defaulting to (0.5,0.5). They specify the desired centre of the fixed
+1024×768 (or smaller sensor) ROI, clamped at edges and aligned to X/8, Y/2. Changing
+selection restarts focus-crop video but does not restart full-field preview. Every
+frame reports `focus_roi` (x,y,width,height in unbinned sensor pixels) and
+`frame_region` (the displayed source's x,y,width,height plus sensor_width/height).
+These fields let the GUI map clicks correctly through resized and cropped images.

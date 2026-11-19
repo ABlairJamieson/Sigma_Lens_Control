@@ -7,6 +7,7 @@ import socket
 import select
 import threading
 import ctypes
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -295,7 +296,18 @@ class ASIBridge:
         focus_token = req.get("focus_token", "")
         if not isinstance(focus_token, str) or len(focus_token) > 80:
             return _err("Invalid focus_token")
-        config = (max_width, max_height, mode) if mode == "full" else (mode,)
+        focus_x, focus_y = req.get("focus_x", 0.5), req.get("focus_y", 0.5)
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or
+               not math.isfinite(v) or not 0 <= v <= 1 for v in (focus_x, focus_y)):
+            return _err("focus_x/focus_y must be finite normalized coordinates in 0..1")
+        width, height = int(self.info["MaxWidth"]), int(self.info["MaxHeight"])
+        focus_w, focus_h = min(width, 1024)//8*8, min(height, 768)//2*2
+        # Clamp the fixed-size box at sensor edges, then align SDK ROI offsets.
+        focus_left = int(max(0, min(width-focus_w, focus_x*width-focus_w/2)))//8*8
+        focus_top = int(max(0, min(height-focus_h, focus_y*height-focus_h/2)))//2*2
+        focus_roi = {"x": focus_left, "y": focus_top, "width": focus_w, "height": focus_h}
+        config = ((max_width, max_height, mode) if mode == "full" else
+                  (mode, focus_left, focus_top))
         fresh_focus = bool(focus_token) and focus_token != self.live_focus_token
         if not self.video_running or self.live_config != config or fresh_focus:
             self.stop_video()
@@ -307,8 +319,11 @@ class ASIBridge:
             roi_h = (height // bins if mode == "full" else min(height, 768)) // 2 * 2
             self.cam.set_roi_format(width=roi_w, height=roi_h,
                                     bins=bins, image_type=asi.ASI_IMG_RAW8)
-            self.cam.set_roi_start_position(0 if mode == "full" else (width-roi_w)//2//8*8,
-                                           0 if mode == "full" else (height-roi_h)//2)
+            origin_x, origin_y = (0, 0) if mode == "full" else (focus_left, focus_top)
+            self.cam.set_roi_start_position(origin_x, origin_y)
+            self.live_region = {"x": origin_x, "y": origin_y,
+                                "width": roi_w*bins, "height": roi_h*bins,
+                                "sensor_width": width, "sensor_height": height}
             self.cam.set_control_value(asi.ASI_EXPOSURE, exposure)
             self.cam.set_control_value(asi.ASI_GAIN, gain)
             self.live_controls = (exposure, gain)
@@ -355,10 +370,15 @@ class ASIBridge:
         processing_started = time.monotonic()
         acquisition_ms = (processing_started-acquisition_started)*1000
         sensor_h, sensor_w = frame.shape[:2]
-        # Bound metric work in full view too; AF always uses this unbinned centre.
-        mw, mh = min(sensor_w, 1024), min(sensor_h, 768)
-        x, y = (sensor_w-mw)//2, (sensor_h-mh)//2
-        patch = frame[y+mh//10:y+mh-mh//10, x+mw//10:x+mw-mw//10]
+        # Score the selected sensor region in both views, before resize/JPEG.
+        # Full view may be binned; autofocus always switches to the unbinned ROI.
+        region = self.live_region
+        left = max(0, int((focus_left-region["x"])*sensor_w/region["width"]))
+        top = max(0, int((focus_top-region["y"])*sensor_h/region["height"]))
+        right = min(sensor_w, int((focus_left+focus_w-region["x"])*sensor_w/region["width"]))
+        bottom = min(sensor_h, int((focus_top+focus_h-region["y"])*sensor_h/region["height"]))
+        mw, mh = right-left, bottom-top
+        patch = frame[top+mh//10:bottom-mh//10, left+mw//10:right-mw//10]
         mean_level = float(patch.mean())
         saturated_fraction = float((patch >= 250).mean())
         patch = cv2.GaussianBlur(patch, (3, 3), 0).astype("float32")
@@ -379,6 +399,7 @@ class ASIBridge:
                      timestamp=datetime.now().astimezone().isoformat(),
                      exposure_us=self.live_actual_controls[0], gain=self.live_actual_controls[1],
                      view_mode=mode, focus_token=focus_token, focus_score=focus_score,
+                     focus_roi=focus_roi, frame_region=self.live_region,
                      mean_level=mean_level, saturated_fraction=saturated_fraction,
                      sensor_w=sensor_w, sensor_h=sensor_h,
                      acquisition_ms=acquisition_ms,

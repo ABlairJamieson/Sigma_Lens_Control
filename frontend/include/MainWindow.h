@@ -9,6 +9,8 @@
 #include <QFile>
 #include <QTextStream>
 #include <QImage>
+#include <QPointF>
+#include <QRectF>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -56,9 +58,13 @@ private:
   QDialog* mFullscreen = nullptr;
   QLabel* mFullscreenLabel = nullptr;
   QVector<QImage> mPreviewFrames = QVector<QImage>(8);
-  QVector<QString> mCapturePaths = QVector<QString>(8);
+  QVector<QPointF> mFocusCenters = QVector<QPointF>(8,QPointF(0.5,0.5));
+  QVector<QSize> mSensorSizes = QVector<QSize>(8);
+  QVector<QRectF> mFrameRegions = QVector<QRectF>(8,QRectF(0,0,1,1));
+  QVector<bool> mFrameCoordinatesValid = QVector<bool>(8,true);
+  void selectFocusRegion(QLabel* label, const QPoint& position, bool centre);
+  QPixmap focusPreview(const QImage& image, const QSize& size) const;
   int mPreviewSlot = 1;
-  int mPreviewClickGeneration = 0;
   AutofocusController* mAutofocus = nullptr;
   QCheckBox *mFollowCapture = nullptr, *mFocusView = nullptr;
   QSpinBox *mLiveExposure = nullptr, *mLiveGain = nullptr, *mFocusRadius = nullptr;

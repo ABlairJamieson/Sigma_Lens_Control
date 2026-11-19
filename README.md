@@ -339,15 +339,18 @@ changes. Local camera IDs remain deployment-specific.
 Above the preview, **Live view** enables streaming from the selected camera slot.
 Turning it off keeps the latest live frame; a subsequent still capture replaces it.
 Changing camera slots restores that slot's latest preview. The **Fullscreen** button
-(or double-clicking the preview) displays live or frozen imagery fitted to the screen;
+displays live or frozen imagery fitted to the screen;
 press **Esc** to return. Fullscreen requests a screen-sized stream, capped at 4K.
 Live view follows changes to the slot's exposure/gain while running, or can use
 separate live settings (preview exposure is capped at 2 seconds). Still captures
 retain the requested full exposure and RAW16 resolution. Focus detail provides a
-small unbinned central crop; the new Autofocus button performs a bounded
+small unbinned crop at the selected focus ROI; the new Autofocus button performs a bounded
 contrast search using fresh frames and actual lens-position feedback.
 See [live view, autofocus and hardware-test notes](frontend/LIVE_VIEW.md).
 Capturing through the GUI pauses and then resumes live view automatically.
+Click an image to place the fixed 1024×768-sensor-pixel focus ROI; right-click to
+centre it. Image clicks no longer open an external viewer or fullscreen. The
+Fullscreen button still enlarges the preview and also supports ROI selection.
 
 Update/restart `asi-bridge` on each BeagleY before enabling live view; older bridges
 continue to support still capture but will reject the new live command. The versioned

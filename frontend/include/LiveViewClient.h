@@ -4,6 +4,7 @@
 #include <QTimer>
 #include <QImage>
 #include <QSize>
+#include <QPointF>
 #include <QJsonObject>
 #include <QElapsedTimer>
 class LiveViewClient : public QObject {
@@ -14,6 +15,7 @@ public:
   void stop();
   void setSettings(int exposureUs, int gain);
   void setFocusView(bool focus);
+  void setFocusCenter(const QPointF& center);
   void setFocusToken(const QString& token);
   void setTargetSize(const QSize& size);
 signals:
@@ -33,6 +35,7 @@ private:
   QJsonObject mHeader;
   QElapsedTimer mRequestTime, mFrameTime;
   QString mFocusToken;
+  QPointF mFocusCenter = QPointF(0.5,0.5);
   bool mFocusView = false;
   bool mActive = false, mWaiting = false;
 };

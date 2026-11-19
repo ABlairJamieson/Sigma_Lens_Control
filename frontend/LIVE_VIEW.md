@@ -25,7 +25,7 @@ size; these help separate camera/host work from network/display costs.
 Full view uses the largest advertised binning that does not exceed the requested
 scale, then reduces the image for display. Fullscreen can request a larger image
 and therefore more processing/transfer. **Focus detail (crop)** instead reads
-an unbinned central sensor ROI, up to 1024×768 pixels. This reduces transferred
+an unbinned sensor ROI, up to 1024×768 pixels, at the selected location. This reduces transferred
 sensor pixels and retains fine detail for focus; it does not show the full scene.
 The display still fits that crop to the preview/fullscreen window.
 
@@ -35,9 +35,32 @@ No measured hardware speedup is claimed. Use the frame rate readout to compare
 full/focus view and fullscreen, and verify the actual negotiated USB speed on the
 host when testing (e.g. `lsusb -t`), rather than inferring it from image size.
 
+## Selecting the focus region
+
+Click inside the displayed image to move a fixed 1024×768 **sensor-pixel** box.
+The yellow box marks the selected region; its screen size changes with the preview
+scale, but its sensor size stays fixed. At sensor edges it is clamped and aligned
+to the SDK's 8-pixel X / 2-pixel Y grid. Smaller sensors use the largest fitting ROI.
+The sharpness readout follows this region in both views, using its central 80%.
+Full view can be binned, so compare scores within one view mode/scale. Autofocus
+always uses the unbinned crop.
+
+Right-click inside the image to centre the ROI. Each camera slot retains its own
+selection for this application session. Black margins around the image are ignored.
+Selection works on full live view, frozen/still previews, and the explicit Fullscreen
+view. Clicks in an already cropped view map through that crop to full-sensor
+coordinates, allowing small location adjustments. Selection is locked during AF.
+
+Single and double clicks no longer open an external image viewer or enlarge the
+preview. Use the **Fullscreen** button to enlarge and Esc to return. Before a live
+frame has supplied sensor geometry, a crosshair marks the intended location; start
+live view to obtain the accurate fixed-size box. Autofocus requires the updated
+host bridge to confirm the selected sensor crop before moving the lens.
+
 ## Autofocus
 
-Put a stationary, textured part of the subject in the centre, set a useful live
+Click a stationary, textured part of the subject in the full preview to place the
+focus ROI over it, then set a useful live
 exposure/gain, and manually get reasonably close to focus. Connect the lens and
 camera, ensure lens status is **RegularMessaging**, and click **Autofocus**.
 The **± raw** value limits the search around the current focus (default ±256,
@@ -58,7 +81,7 @@ exposure/gain/aperture/manual lens controls. The search:
   measured position with a final telemetry check.
 
 The score is mean squared Sobel gradient magnitude (Tenengrad) after a light 3×3
-Gaussian blur, measured in the central 80% of an at-most 1024×768 uncompressed sensor patch before
+Gaussian blur, measured in the central 80% of the selected ROI before
 resizing/JPEG. This is contrast-detection autofocus. See the
 [OpenCV comparison of focus measures](https://opencv.org/blog/autofocus-using-opencv-a-comparative-study-of-focus-measures-for-sharpness-assessment/)
 and [Pertuz et al., Analysis of focus measure operators (2013)](https://isp-utb.github.io/seminario/papers/Pattern_Recognition_Pertuz_2013.pdf).

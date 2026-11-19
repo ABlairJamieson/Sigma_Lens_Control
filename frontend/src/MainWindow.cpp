@@ -6,12 +6,11 @@
 #include <QMessageBox>
 #include <QFrame>
 #include <QPixmap>
+#include <QPainter>
 #include <QImageReader>
 #include <QScrollBar>
 #include <QScrollArea>
 #include <QFileInfo>
-#include <QDesktopServices>
-#include <QUrl>
 #include <QMouseEvent>
 #include <QFileInfo>
 #include <QDateTime>
@@ -36,6 +35,13 @@
 #include <algorithm>
 #include <QUuid>
 
+// Match the SDK's fixed unbinned ROI size, edge clamp and offset alignment.
+static QRect focusRectangle(const QPointF& centre, const QSize& sensor) {
+  const int width=std::min(sensor.width(),1024)/8*8, height=std::min(sensor.height(),768)/2*2;
+  const int x=int(std::clamp(centre.x()*sensor.width()-width/2.0,0.0,double(sensor.width()-width)))/8*8;
+  const int y=int(std::clamp(centre.y()*sensor.height()-height/2.0,0.0,double(sensor.height()-height)))/2*2;
+  return QRect(x,y,width,height);
+}
 
 void MainWindow::openLogFile()
 {
@@ -89,8 +95,8 @@ MainWindow::MainWindow(QWidget *parent)
   if (ui->label_mainPreview)
   {
     ui->label_mainPreview->installEventFilter(this);
-    ui->label_mainPreview->setCursor(Qt::PointingHandCursor);
-    ui->label_mainPreview->setToolTip("Double-click for fullscreen. When live view is off, click to open the last captured TIFF.");
+    ui->label_mainPreview->setCursor(Qt::CrossCursor);
+    ui->label_mainPreview->setToolTip("Click the image to place the fixed 1024 × 768 focus ROI. Right-click to centre it. Use the Fullscreen button to enlarge.");
     ui->label_mainPreview->setScaledContents(false);
     ui->label_mainPreview->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Ignored);
   }
@@ -131,7 +137,7 @@ MainWindow::MainWindow(QWidget *parent)
   ui->verticalLayout_previewBox->insertLayout(1, settingsRow);
   auto focusRow = new QHBoxLayout;
   mFocusView = new QCheckBox("Focus detail (crop)",this); mFocusView->setObjectName("focusDetail");
-  mFocusView->setToolTip("Unbinned central 1024 × 768 sensor region. Full view uses sensor binning.");
+  mFocusView->setToolTip("Unbinned view of the selected 1024 × 768 focus ROI. Select its location by clicking the full image; right-click to centre.");
   mFocusRadius = new QSpinBox(this); mFocusRadius->setRange(16,4545); mFocusRadius->setValue(256);
   mFocusRadius->setObjectName("autofocusRadius"); mFocusRadius->setMaximumWidth(110);
   mFocusRadius->setPrefix("± "); mFocusRadius->setSuffix(" raw");
@@ -168,12 +174,27 @@ MainWindow::MainWindow(QWidget *parent)
     finishAutofocus(message);
   });
   connect(mLive,&LiveViewClient::frameMetadata,this,[this](const QJsonObject& metadata) {
+    const auto region=metadata.value("frame_region").toObject();
+    const int w=region.value("sensor_width").toInt(), h=region.value("sensor_height").toInt();
+    const QRect pixels(region.value("x").toInt(),region.value("y").toInt(),
+                       region.value("width").toInt(),region.value("height").toInt());
+    const bool valid=w>0 && h>0 && pixels.width()>0 && pixels.height()>0 &&
+      pixels.x()>=0 && pixels.y()>=0 && pixels.x()+pixels.width()<=w && pixels.y()+pixels.height()<=h;
+    if (valid) {
+      mSensorSizes[mPreviewSlot-1]=QSize(w,h);
+      mFrameRegions[mPreviewSlot-1]=QRectF(double(pixels.x())/w,double(pixels.y())/h,
+                                        double(pixels.width())/w,double(pixels.height())/h);
+    } else mFrameRegions[mPreviewSlot-1]=QRectF(0,0,1,1);
+    mFrameCoordinatesValid[mPreviewSlot-1]=valid || metadata.value("view_mode").toString()!="focus";
+    renderPreview();
     if (mFocusPreparing) {
-      if (!metadata.contains("focus_token") || !metadata.value("focus_score").isDouble()) {
+      if (!metadata.contains("focus_token") || !metadata.value("focus_score").isDouble() ||
+          !metadata.value("focus_roi").isObject() || !valid) {
         finishAutofocus("Host bridge does not support autofocus; update it first"); return;
       }
       if (metadata.value("focus_token").toString()!=mFocusPrepareToken) return;
-      if (metadata.value("view_mode").toString()!="focus") {
+      if (metadata.value("view_mode").toString()!="focus" ||
+          pixels != focusRectangle(mFocusCenters[mPreviewSlot-1],QSize(w,h))) {
         finishAutofocus("Host bridge does not support autofocus; update it first"); return;
       }
       if (metadata.value("focus_score").toDouble()<=1 || metadata.value("mean_level").toDouble(-1)<5 ||
@@ -322,6 +343,7 @@ void MainWindow::updateLiveSettings() {
   mLiveExposure->setEnabled(!follow && !mAutofocus->active() && !mFocusPreparing);
   mLiveGain->setEnabled(!follow && !mAutofocus->active() && !mFocusPreparing);
   mLive->setSettings(mLiveExposure->value()*1000,mLiveGain->value());
+  mLive->setFocusCenter(mFocusCenters[mPreviewSlot-1]);
 }
 void MainWindow::beginAutofocus() {
   auto panel=panelBySlot1(mPreviewSlot);
@@ -383,11 +405,11 @@ void MainWindow::renderPreview() {
     ui->label_mainPreview->setText("Capture an image or enable live view.");
   } else {
     ui->label_mainPreview->setText(QString());
-    ui->label_mainPreview->setPixmap(QPixmap::fromImage(image).scaled(ui->label_mainPreview->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    ui->label_mainPreview->setPixmap(focusPreview(image,ui->label_mainPreview->contentsRect().size()));
   }
   if (mFullscreenLabel && mFullscreen->isVisible()) {
     if (image.isNull()) { mFullscreenLabel->clear(); mFullscreenLabel->setText("No image for this slot. Esc to close."); }
-    else { mFullscreenLabel->setText(QString()); mFullscreenLabel->setPixmap(QPixmap::fromImage(image).scaled(mFullscreenLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation)); }
+    else { mFullscreenLabel->setText(QString()); mFullscreenLabel->setPixmap(focusPreview(image,mFullscreenLabel->contentsRect().size())); }
   }
 }
 void MainWindow::openFullscreen() {
@@ -397,6 +419,9 @@ void MainWindow::openFullscreen() {
     mFullscreen->setStyleSheet("background:black;");
     auto layout = new QVBoxLayout(mFullscreen); layout->setContentsMargins(0,0,0,0);
     mFullscreenLabel = new QLabel("Capture an image or enable live view. Esc to close.", mFullscreen);
+    mFullscreenLabel->setObjectName("fullscreenPreviewImage");
+    mFullscreenLabel->installEventFilter(this); mFullscreenLabel->setCursor(Qt::CrossCursor);
+    mFullscreenLabel->setToolTip(ui->label_mainPreview->toolTip());
     mFullscreenLabel->setAlignment(Qt::AlignCenter); mFullscreenLabel->setStyleSheet("color:white;");
     mFullscreenLabel->setMinimumSize(1,1); mFullscreenLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     layout->addWidget(mFullscreenLabel); mFullscreen->installEventFilter(this);
@@ -411,6 +436,7 @@ void MainWindow::onPanelPreviewSaved(int slot1, const QString& path) {
   QImage image(path);
   if (image.isNull()) { onPanelStatusMessage(slot1, "Preview load failed: " + path); return; }
   mPreviewFrames[slot1-1] = image;
+  mFrameRegions[slot1-1]=QRectF(0,0,1,1); mFrameCoordinatesValid[slot1-1]=true;
   if (slot1 == mPreviewSlot) renderPreview();
 }
 void MainWindow::onLensLedChanged(int slot1, DevicePanel::LedState state)
@@ -470,37 +496,65 @@ void MainWindow::onPanelStatusMessage(int slot1, const QString& msg)
 }
 
 
+QPixmap MainWindow::focusPreview(const QImage& image, const QSize& size) const {
+  auto pixmap=QPixmap::fromImage(image).scaled(size,Qt::KeepAspectRatio,Qt::SmoothTransformation);
+  const int slot=mPreviewSlot-1;
+  if (pixmap.isNull() || !mFrameCoordinatesValid[slot]) return pixmap;
+  const auto frame=mFrameRegions[slot];
+  QPainter painter(&pixmap); painter.setPen(QPen(QColor("#ffdd00"),2));
+  QPointF centre=mFocusCenters[slot];
+  if (!mSensorSizes[slot].isEmpty()) {
+    const auto sensor=mSensorSizes[slot]; const auto roi=focusRectangle(centre,sensor);
+    const QRectF sensorBox(double(roi.x())/sensor.width(),double(roi.y())/sensor.height(),
+                           double(roi.width())/sensor.width(),double(roi.height())/sensor.height());
+    QRectF box((sensorBox.x()-frame.x())/frame.width()*pixmap.width(),
+               (sensorBox.y()-frame.y())/frame.height()*pixmap.height(),
+               sensorBox.width()/frame.width()*pixmap.width(),sensorBox.height()/frame.height()*pixmap.height());
+    painter.drawRect(box.adjusted(1,1,-1,-1));
+    centre=sensorBox.center();
+  }
+  const QPointF cross((centre.x()-frame.x())/frame.width()*pixmap.width(),
+                      (centre.y()-frame.y())/frame.height()*pixmap.height());
+  painter.drawLine(cross-QPointF(7,0),cross+QPointF(7,0));
+  painter.drawLine(cross-QPointF(0,7),cross+QPointF(0,7));
+  return pixmap;
+}
+void MainWindow::selectFocusRegion(QLabel* label, const QPoint& position, bool centre) {
+  if (mAutofocus->active() || mFocusPreparing) return;
+  const int slot=mPreviewSlot-1;
+  if (mPreviewFrames[slot].isNull() || !mFrameCoordinatesValid[slot]) return;
+  const QSize shown=mPreviewFrames[slot].size().scaled(label->contentsRect().size(),Qt::KeepAspectRatio);
+  if (shown.isEmpty()) return;
+  const QRect imageRect(QPoint(label->contentsRect().x()+(label->contentsRect().width()-shown.width())/2,
+                               label->contentsRect().y()+(label->contentsRect().height()-shown.height())/2),shown);
+  if (!imageRect.contains(position)) return; // Ignore letterbox/pillarbox margins.
+  const auto region=mFrameRegions[slot];
+  mFocusCenters[slot]=centre ? QPointF(0.5,0.5) :
+    QPointF(region.x()+double(position.x()-imageRect.x())/shown.width()*region.width(),
+            region.y()+double(position.y()-imageRect.y())/shown.height()*region.height());
+  mLive->setFocusCenter(mFocusCenters[slot]); mFocusResult.clear(); renderPreview();
+  onPanelStatusMessage(mPreviewSlot,QString("Focus ROI selected at %1%, %2% of sensor%3")
+    .arg(mFocusCenters[slot].x()*100,0,'f',1).arg(mFocusCenters[slot].y()*100,0,'f',1)
+    .arg(mSensorSizes[slot].isEmpty() ? " — start live view to show the fixed-size box" : " (1024 × 768, clamped at edges)"));
+}
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
-  if ((obj == ui->label_mainPreview || obj == mFullscreen) && event->type() == QEvent::Resize)
-    QTimer::singleShot(0, this, &MainWindow::renderPreview);
-  if (obj == ui->label_mainPreview && event->type() == QEvent::MouseButtonDblClick) { ++mPreviewClickGeneration; openFullscreen(); return true; }
-
-  if (obj == ui->label_mainPreview && event->type() == QEvent::MouseButtonPress)
-  {
-    auto* me = static_cast<QMouseEvent*>(event);
-    if (me->button() == Qt::LeftButton)
-    {
-      const int generation = ++mPreviewClickGeneration;
-      QTimer::singleShot(QApplication::doubleClickInterval(), this, [this,generation] {
-        if (generation != mPreviewClickGeneration || mLiveToggle->isChecked()) return;
-        const auto path = mCapturePaths[mPreviewSlot-1];
-        if (!path.isEmpty() && QFileInfo::exists(path)) {
-          const bool opened = QDesktopServices::openUrl(QUrl::fromLocalFile(path));
-          onPanelStatusMessage(mPreviewSlot, (opened ? "Opened TIFF: " : "Cannot open TIFF: ") + path);
-        }
-      });
-      return true;
+  const bool preview=obj==ui->label_mainPreview || obj==mFullscreenLabel;
+  if ((preview || obj==mFullscreen) && event->type()==QEvent::Resize)
+    QTimer::singleShot(0,this,&MainWindow::renderPreview);
+  if (preview && event->type()==QEvent::MouseButtonDblClick) return true;
+  if (preview && event->type()==QEvent::MouseButtonRelease) {
+    auto mouse=static_cast<QMouseEvent*>(event);
+    if (mouse->button()==Qt::LeftButton || mouse->button()==Qt::RightButton) {
+      selectFocusRegion(static_cast<QLabel*>(obj),mouse->pos(),mouse->button()==Qt::RightButton); return true;
     }
   }
-
-  return QMainWindow::eventFilter(obj, event);
+  return QMainWindow::eventFilter(obj,event);
 }
 
 void MainWindow::onPanelCaptureSaved(int slot1, const QString& path)
 {
   mLastCapturedTiffPath = path;
-  if (slot1 >= 1 && slot1 <= 8) mCapturePaths[slot1-1] = path;
   if (mCaptureAllTotal > 0)
   {
     mCaptureAllDone++;

@@ -269,6 +269,52 @@ class CameraFeatures(unittest.TestCase):
         self.assertFalse(b.live_frame(request, owner)["ok"])
         self.assertIsNone(b.live_owner)
 
+    def test_selected_focus_roi_aligns_clamps_and_only_restarts_crop(self):
+        b = bridge()
+        b.info.update(MaxWidth=9576, MaxHeight=6388)
+        starts = []
+        b.cam.set_roi_start_position = lambda x, y: starts.append((x, y))
+        owner = MemoryConnection()
+        b.live_frame({"view_mode": "focus", "focus_x": .75, "focus_y": .25}, owner)
+        header = json.loads(bytes(owner.data).split(b"\n", 1)[0])
+        self.assertEqual(header["focus_roi"], {"x": 6664, "y": 1212, "width": 1024, "height": 768})
+        self.assertEqual(starts, [(6664, 1212)])
+        owner.data.clear()
+        b.live_frame({"view_mode": "focus", "focus_x": 1, "focus_y": 0}, owner)
+        self.assertEqual(starts[-1], (8552, 0))
+        self.assertEqual(len(starts), 2)
+        owner.data.clear()
+        b.live_frame({"view_mode": "full"}, owner)
+        b.cam.start_video_capture = lambda: self.fail("ROI selection restarted full-field video")
+        owner.data.clear()
+        b.live_frame({"view_mode": "full", "focus_x": 0, "focus_y": 1}, owner)
+        header = json.loads(bytes(owner.data).split(b"\n", 1)[0])
+        self.assertEqual(header["focus_roi"]["x"], 0)
+        self.assertEqual(header["focus_roi"]["y"], 5620)
+        self.assertEqual(header["frame_region"]["x"], 0)
+
+    def test_full_field_sharpness_scores_selected_region(self):
+        b = bridge()
+        b.info.update(MaxWidth=2048, MaxHeight=1024, SupportedBins=[1])
+        yy, xx = np.indices((1024, 2048))
+        image = np.full((1024, 2048), 128, dtype=np.uint8)
+        image[:, 1024:] = ((xx[:, 1024:]//8 + yy[:, 1024:]//8) % 2 * 160 + 40).astype(np.uint8)
+        b.cam.capture_video_frame = lambda timeout: image
+        owner = MemoryConnection()
+        b.live_frame({"focus_x": .25}, owner)
+        first = json.loads(bytes(owner.data).split(b"\n", 1)[0])
+        owner.data.clear()
+        b.live_frame({"focus_x": .75}, owner)
+        second = json.loads(bytes(owner.data).split(b"\n", 1)[0])
+        self.assertEqual(first["focus_score"], 0)
+        self.assertGreater(second["focus_score"], 100)
+
+    def test_focus_roi_rejects_invalid_coordinates(self):
+        b = bridge()
+        for invalid in (-.01, 1.01, float("nan"), float("inf"), "0.5", None, True):
+            self.assertFalse(b.live_frame({"focus_x": invalid}, MemoryConnection())["ok"])
+        self.assertFalse(b.video_running)
+
     def test_carrier_read_never_initializes_camera(self):
         from unittest.mock import patch
         b = bridge()
