@@ -376,7 +376,7 @@ The optional v1.1 carrier service owns camera 12 V enable and reads two INA226
 monitors plus one J602 TMP117 at 0x48. Provision with
 `sudo python3 cm5_setup/install.py --sdk PATH_TO_SDK --camera-id ID --carrier-v1-1`.
 Camera 12 V defaults OFF after boot. SigmaControl provides per-camera power
-buttons and voltage/current/temperature readbacks on Power/status. Its independent
+buttons and voltage/current/temperature readbacks on Power + Connection. Its independent
 **Connect host** connection uses the existing port 5001 and works with the ASI
 camera disconnected or off. No extra port or Teensy firmware change is needed.
 See [carrier setup and protocol](cm5_setup/CARRIER_CONTROL.md).

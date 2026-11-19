@@ -8,6 +8,8 @@ import select
 import threading
 import ctypes
 import math
+import signal
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -104,6 +106,37 @@ def carrier_request(command="read"):
         return result
     except (OSError, ValueError, RuntimeError) as exc:
         return {"available": False, "supported": False, "platform": platform, "error": str(exc)}
+
+
+_lens_restart_lock = threading.Lock()
+_lens_last_restart = float("-inf")
+
+
+def restart_lens_bridge():
+    """Restart only our own systemd-managed Teensy process; no sudo or shell."""
+    global _lens_last_restart
+    with _lens_restart_lock:
+        if time.monotonic() - _lens_last_restart < 30:
+            return _err("Lens bridge restart already requested; wait 30 seconds", cmd="lens_bridge_restart")
+        try:
+            result = subprocess.run(
+                ["systemctl", "show", "teensy-bridge.service", "--property=MainPID", "--property=Restart"],
+                check=True, capture_output=True, text=True, timeout=2)
+            properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            pid = int(properties.get("MainPID", "0"))
+            if properties.get("Restart") != "always" or pid <= 1:
+                raise RuntimeError("Teensy bridge is not running with Restart=always; check the service on the host")
+            proc = Path("/proc") / str(pid)
+            if proc.stat().st_uid != os.geteuid():
+                raise RuntimeError("Teensy bridge must run as the same user as the camera bridge")
+            argv = (proc / "cmdline").read_bytes().split(b"\0")
+            if not any(arg.endswith(b"/teensy_bridge.py") for arg in argv):
+                raise RuntimeError("Service process is not the expected Teensy bridge")
+            os.kill(pid, signal.SIGTERM)
+            _lens_last_restart = time.monotonic()
+            return _ok(cmd="lens_bridge_restart", message="Lens bridge restart requested")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            return _err(str(exc), cmd="lens_bridge_restart")
 
 
 class ASIBridge:
@@ -654,6 +687,9 @@ class ASIBridge:
         cmd = (req.get("cmd") or "").strip().lower()
         log(f"handle_request(): cmd={cmd} req={req}")
 
+        if cmd == "lens_bridge_restart":
+            return restart_lens_bridge()
+
         if cmd == "carrier_read":
             carrier = carrier_request()
             return _ok(cmd="carrier_read", carrier=carrier, capabilities=bridge_capabilities(carrier),
@@ -784,7 +820,7 @@ def client_thread(bridge: ASIBridge, conn: socket.socket, addr):
                     if not isinstance(command, str):
                         raise ValueError("cmd must be a string")
                     command = command.strip().lower()
-                    if command == "carrier_read":
+                    if command in ("carrier_read", "lens_bridge_restart"):
                         # Telemetry remains available while another client exposes/transfers.
                         resp = bridge.handle_request(req, conn)
                     elif command in ("live_frame", "camera_power"):

@@ -68,7 +68,7 @@ void EnvironmentHistory::paintPlot(QWidget* widget, bool motion) {
   const QStringList environmentNames = {"Temperature (°C)", "Relative humidity (%)", "Pressure (hPa)"};
   const QStringList names = mMotionGroup == 0 ? QStringList{"Magnetic X (µT)", "Magnetic Y (µT)", "Magnetic Z (µT)"} : mMotionGroup == 1 ? QStringList{"Gyroscope X (rad/s)", "Gyroscope Y (rad/s)", "Gyroscope Z (rad/s)"} : QStringList{"Acceleration X (m/s²)", "Acceleration Y (m/s²)", "Acceleration Z (m/s²)"};
   const qint64 end = QDateTime::currentMSecsSinceEpoch(), start = end - window;
-  for (int slot = 1; slot <= 8; ++slot) { p.setPen(colors[slot-1]); p.drawText(10 + (slot-1)* (widget->width()/8), 18, QString("Slot %1").arg(slot)); }
+  for (int slot = 1; slot <= 8; ++slot) { p.setPen(colors[slot-1]); p.drawText(10 + (slot-1)* (widget->width()/8), 18, QString("PCH%1").arg(slot)); }
   for (int metric = 0; metric < metrics; ++metric) {
     QRectF box(65, 55 + metric * (widget->height()-70)/double(metrics), widget->width()-85, (widget->height()-70)/double(metrics) - 55);
     const int valueIndex = motion ? 3 + mMotionGroup*3 + metric : metric;

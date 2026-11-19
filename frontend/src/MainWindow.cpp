@@ -399,7 +399,7 @@ void MainWindow::updatePreviewControls() {
 }
 void MainWindow::renderPreview() {
   const auto& image = mPreviewFrames[mPreviewSlot-1];
-  ui->group_preview->setTitle(QString("Preview — Slot %1").arg(mPreviewSlot));
+  ui->group_preview->setTitle(QString("Preview — PCH%1").arg(mPreviewSlot));
   if (image.isNull()) {
     ui->label_mainPreview->setPixmap(QPixmap());
     ui->label_mainPreview->setText("Capture an image or enable live view.");
@@ -480,7 +480,7 @@ void MainWindow::onCameraLedChanged(int slot1, DevicePanel::LedState state)
 
 void MainWindow::onPanelStatusMessage(int slot1, const QString& msg)
 {
-  const QString line = QString("[S%1] %2").arg(slot1).arg(msg);
+  const QString line = QString("[PCH%1] %2").arg(slot1).arg(msg);
 
   if (ui->statusbar)
     ui->statusbar->showMessage(line, 5000);

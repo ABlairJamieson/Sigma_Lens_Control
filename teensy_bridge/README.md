@@ -184,3 +184,16 @@ tcp:192.168.137.xxx:5000
 * Bridge binds to `0.0.0.0` so it accepts connections on any interface.
 * No changes are required to Teensy firmware for network operation.
 * Each camera must have a unique static IP.
+
+## USB reconnect and frontend recovery
+
+A serial read failure now exits the bridge rather than repeatedly reading a stale
+USB descriptor. The installed `Restart=always`, `RestartSec=3` service reopens the
+Teensy, including after unplug/replug and USB device renumbering. If USB is still
+absent, systemd retries until it appears. This needs no firmware change.
+
+The updated camera bridge accepts `{"cmd":"lens_bridge_restart"}` on its normal
+TCP port. It validates the fixed `teensy-bridge.service` process and same-user
+ownership, then signals it to let systemd restart it (at most once/30 seconds).
+SigmaControl uses this once after a failed lens connection or missing initial
+status, then retries. There is no arbitrary service/command argument.

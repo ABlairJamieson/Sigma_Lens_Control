@@ -97,10 +97,10 @@ position could not be verified. A peak at the search edge is flagged for manual
 checking or a wider search. This is a first implementation, not yet calibrated for
 moving subjects, changing illumination, underwater backscatter or low texture.
 
-## Power/status without an ASI connection
+## Power + Connection without an ASI connection
 
-On a camera slot's **Power/status** tab, click **Connect host**. It uses the host
-and camera port configured on that slot's Connection tab (normally 5001), but opens
+On a PCH's **Power + Connection** tab, click **Connect host**. It uses the host
+and camera port configured on that same page (normally 5001), but opens
 an independent TCP connection and sends `carrier_read`, not ASI `status`/open.
 No additional network port is needed. The connected host endpoint is displayed.
 
@@ -149,3 +149,26 @@ Confirm the selected position against manual focus, repeat from both approach
 directions and check cancellation. Repeat cold starts through the single surface
 switch separately to assess USB 3 negotiation; live-view changes do not validate
 that hardware power-sequencing fix.
+
+## PCH connections and lens recovery
+
+The eight device pages are PCH1–PCH8, with defaults 192.168.50.2–192.168.50.9
+respectively (lens TCP 5000, camera/host TCP 5001). Host and port edits are saved
+separately under `pch1` … `pch8` in SigmaControl settings; the old single global
+host setting is no longer copied across every page.
+
+Each PCH has three pages: **Camera + Lens**, **Power + Connection**, and
+**Environment**. In Power + Connection, click **Connect host**, enable camera
+12 V, then connect camera/lens. Host power and telemetry do not require an ASI
+camera connection. Existing Connect both/Disconnect both shortcuts remain above
+the pages.
+
+A failed TCP lens connection, or no Teensy ID/state within 3 seconds, requests
+one `lens_bridge_restart` through that PCH's camera/host bridge. SigmaControl
+waits 6 seconds for the service and retries once; no second restart occurs in
+that attempt. Missing USB or a failed retry produces an explicit failure.
+Disconnect cancels pending recovery. Serial-direct connections are unaffected.
+The host camera bridge must be updated for this command. The fixed service must
+run as the same user with `Restart=always`; no sudo permission is added. Restart
+requests are rate-limited to one per 30 seconds. Only the Teensy bridge restarts;
+this does not restart sigma-carrier or change camera 12 V.

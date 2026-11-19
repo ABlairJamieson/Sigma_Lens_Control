@@ -2,12 +2,36 @@
 
 #include <QMessageBox>
 #include <QTimer>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 LensClient::LensClient(QObject* parent)
   : QObject(parent),
     mSerial(new QSerialPort(this)),
     mSock(new QTcpSocket(this))
 {
+  mRecoverySock = new QTcpSocket(this);
+  mConnectionProbe.setSingleShot(true);
+  mRecoveryDeadline.setSingleShot(true);
+  mRetryTimer.setSingleShot(true);
+  connect(&mConnectionProbe, &QTimer::timeout, this, &LensClient::recoverConnection);
+  connect(&mRetryTimer, &QTimer::timeout, this, &LensClient::retryConnection);
+  connect(&mRecoveryDeadline, &QTimer::timeout, this, [this]{ failConnection("Host did not reply to bridge restart request"); });
+  connect(mRecoverySock, &QTcpSocket::connected, this, [this]{
+    mRecoverySock->write("{\"cmd\":\"lens_bridge_restart\"}\n");
+  });
+  connect(mRecoverySock, &QTcpSocket::readyRead, this, [this]{
+    if (!mRecoverySock->canReadLine()) return;
+    const auto reply=QJsonDocument::fromJson(mRecoverySock->readLine()).object();
+    mRecoveryDeadline.stop();
+    mRecoverySock->abort();
+    if (!reply.value("ok").toBool()) { failConnection(reply.value("error").toString("Host bridge restart unavailable")); return; }
+    emit statusMessage("Lens bridge restarting; retrying once in 6 seconds");
+    mRetryTimer.start(6000);
+  });
+  connect(mRecoverySock, &QTcpSocket::errorOccurred, this, [this](auto){
+    if (mRecoveryDeadline.isActive()) failConnection("Cannot reach host to restart lens bridge: " + mRecoverySock->errorString());
+  });
   mTelemetryAge.start();
   auto telemetryWatchdog = new QTimer(this);
   connect(telemetryWatchdog, &QTimer::timeout, this, [this] {
@@ -23,13 +47,15 @@ LensClient::LensClient(QObject* parent)
   connect(mSerial, &QSerialPort::errorOccurred, this, &LensClient::onSerialError);
 
   connect(mSock, &QTcpSocket::errorOccurred, this, [this](auto){
-    emit statusMessage("Lens TCP error");
-    disconnect();
+    emit statusMessage("Lens TCP error: " + mSock->errorString());
+    if (mAwaitingStatus) mConnectionProbe.start(0);
+    else disconnect();
   });
 
   connect(mSock, &QTcpSocket::disconnected, this, [this](){
     emit statusMessage("Lens TCP disconnected");
-    disconnect();
+    if (mAwaitingStatus) mConnectionProbe.start(0);
+    else disconnect();
   });
 }
 
@@ -47,6 +73,9 @@ QString LensClient::connectionLabel() const
 
 void LensClient::disconnect()
 {
+  mAwaitingStatus = false;
+  mConnectionProbe.stop(); mRecoveryDeadline.stop(); mRetryTimer.stop();
+  mRecoverySock->abort();
   if (mSerial && mSerial->isOpen()) mSerial->close();
   if (mSock && mSock->isOpen())     mSock->close();
 
@@ -95,6 +124,9 @@ bool LensClient::connectSerial(const QString& portName)
 
 bool LensClient::connectToEndpoint(const QString& endpoint)
 {
+  disconnect();
+  mAttemptEndpoint = endpoint.trimmed();
+  mRetryUsed = false;
   // close anything
   if (mSerial->isOpen()) mSerial->close();
   if (mSock->isOpen())   mSock->close();
@@ -112,10 +144,49 @@ bool LensClient::connectToEndpoint(const QString& endpoint)
     const quint16 port = hp[1].toUShort(&ok);
     if (!ok || port == 0) return false;
 
-    return connectTcp(hp[0], port);
+    if (!connectTcp(hp[0], port)) {
+      if (mRecoveryHost.isEmpty()) return false;
+      mConnectionProbe.start(0);
+      return true;
+    }
+    mAwaitingStatus = true;
+    mConnectionProbe.start(3000);
+    sendLine("ST");
+    return true;
   }
 
   return connectSerial(target);
+}
+
+void LensClient::setRecoveryEndpoint(const QString& host, quint16 port) {
+  mRecoveryHost=host; mRecoveryPort=port;
+}
+
+void LensClient::failConnection(const QString& reason) {
+  disconnect();
+  emit statusMessage("Lens connection failed: " + reason + "; check Teensy USB and host teensy-bridge service");
+}
+
+void LensClient::recoverConnection() {
+  if (mRecoveryDeadline.isActive() || mRetryTimer.isActive()) return;
+  if (mRetryUsed || mRecoveryHost.isEmpty()) {
+    failConnection("No Teensy status received"); return;
+  }
+  disconnect();
+  mRetryUsed=true;
+  emit statusMessage("Lens unavailable; requesting one host bridge restart");
+  mRecoveryDeadline.start(4000);
+  mRecoverySock->connectToHost(mRecoveryHost,mRecoveryPort);
+}
+
+void LensClient::retryConnection() {
+  const auto parts=mAttemptEndpoint.mid(4).split(':');
+  if (parts.size()!=2 || !connectTcp(parts[0],parts[1].toUShort())) {
+    failConnection("Bridge still unreachable after restart"); return;
+  }
+  mAwaitingStatus=true;
+  mConnectionProbe.start(4000);
+  sendLine("ST");
 }
 
 void LensClient::sendLine(const QString& line)
@@ -154,6 +225,10 @@ void LensClient::parseLineToKv(const QString& line)
 
   if ((kv.contains("ID") && kv.contains("S")) || kv.contains("T") || kv.contains("H") ||
       kv.contains("Bx") || kv.contains("Gx") || kv.contains("Ax")) mTelemetryAge.restart();
+  if (kv.contains("ID") && kv.contains("S")) {
+    mAwaitingStatus=false;
+    mConnectionProbe.stop();
+  }
   mLastKv = kv;
   emit telemetryUpdated(mLastKv);
 }

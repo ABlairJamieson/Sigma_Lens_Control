@@ -64,7 +64,9 @@ class Bridge:
                         self.clients.discard(w)
             except Exception as e:
                 print(f"[SERIAL READER ERROR] {e}", flush=True)
-                await asyncio.sleep(0.2)
+                # Let systemd reopen a disconnected/stale serial device. Keeping
+                # this file descriptor forever cannot recover a USB replug.
+                raise RuntimeError("Teensy serial device lost; restart bridge") from e
 
     async def handle_client(self, reader, writer):
         peer = writer.get_extra_info("peername")
@@ -110,8 +112,11 @@ async def main():
     bridge = Bridge(ser)
     server = await asyncio.start_server(bridge.handle_client, "0.0.0.0", TCP_PORT)
 
-    async with server:
-        await asyncio.gather(server.serve_forever(), bridge.serial_reader())
+    try:
+        async with server:
+            await asyncio.gather(server.serve_forever(), bridge.serial_reader())
+    finally:
+        ser.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

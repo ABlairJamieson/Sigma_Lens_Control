@@ -55,6 +55,7 @@ public:
   void setLensSettings(const LensSettings& s);
 
   // Convenience status for MainWindow
+  void saveEndpointSettings();
   bool lensConnected() const;
   bool focusReady() const;
   int actualFocus() const { return mLensPos; }

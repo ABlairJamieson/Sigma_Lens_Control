@@ -117,7 +117,7 @@
       <widget class="QTabWidget" name="tabWidget_devices">
        <property name="currentIndex"><number>0</number></property>
        <widget class="QWidget" name="tab_slot1">
-        <attribute name="title"><string>Slot 1</string></attribute>
+        <attribute name="title"><string>PCH1</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot1">
          <item>
           <widget class="QScrollArea" name="scroll_slot1">
@@ -128,7 +128,7 @@
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot2">
-        <attribute name="title"><string>Slot 2</string></attribute>
+        <attribute name="title"><string>PCH2</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot2">
          <item>
           <widget class="QScrollArea" name="scroll_slot2">
@@ -139,7 +139,7 @@
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot3">
-        <attribute name="title"><string>Slot 3</string></attribute>
+        <attribute name="title"><string>PCH3</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot3">
          <item>
           <widget class="QScrollArea" name="scroll_slot3">
@@ -150,7 +150,7 @@
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot4">
-        <attribute name="title"><string>Slot 4</string></attribute>
+        <attribute name="title"><string>PCH4</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot4">
          <item>
           <widget class="QScrollArea" name="scroll_slot4">
@@ -161,7 +161,7 @@
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot5">
-        <attribute name="title"><string>Slot 5</string></attribute>
+        <attribute name="title"><string>PCH5</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot5">
          <item>
           <widget class="QScrollArea" name="scroll_slot5">
@@ -172,7 +172,7 @@
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot6">
-        <attribute name="title"><string>Slot 6</string></attribute>
+        <attribute name="title"><string>PCH6</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot6">
          <item>
           <widget class="QScrollArea" name="scroll_slot6">
@@ -183,7 +183,7 @@
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot7">
-        <attribute name="title"><string>Slot 7</string></attribute>
+        <attribute name="title"><string>PCH7</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot7">
          <item>
           <widget class="QScrollArea" name="scroll_slot7">
@@ -194,7 +194,7 @@
         </layout>
        </widget>
        <widget class="QWidget" name="tab_slot8">
-        <attribute name="title"><string>Slot 8</string></attribute>
+        <attribute name="title"><string>PCH8</string></attribute>
         <layout class="QVBoxLayout" name="verticalLayout_slot8">
          <item>
           <widget class="QScrollArea" name="scroll_slot8">

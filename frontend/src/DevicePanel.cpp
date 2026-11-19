@@ -1,3 +1,4 @@
+#include <QSignalBlocker>
 #include "../include/DevicePanel.h"
 #include "ui_DevicePanel.h"
 
@@ -83,7 +84,7 @@ DevicePanel::DevicePanel(QWidget* parent)
   powerButtons->addWidget(mCameraPowerOff);
   mCarrierRefresh = new QPushButton("Refresh readings", carrierBox);
   mCarrierRefresh->setObjectName("carrierRefresh");
-  powerButtons->addWidget(mCarrierRefresh);
+
   connect(mCarrierRefresh, &QPushButton::clicked, mCarrier, &CameraClient::requestStatus);
   auto hostButtons = new QHBoxLayout;
   auto hostConnect = new QPushButton("Connect host", carrierBox);
@@ -92,6 +93,7 @@ DevicePanel::DevicePanel(QWidget* parent)
   hostButtons->addWidget(hostConnect); hostButtons->addWidget(hostDisconnect);
   carrierLayout->addLayout(hostButtons);
   connect(hostConnect, &QPushButton::clicked, this, [this] {
+    saveEndpointSettings();
     if (!mCarrier->connectToEndpoint(cameraEndpoint()))
       emit statusMessage(mSlotIndex1, "Carrier host connection failed: " + cameraEndpoint());
   });
@@ -113,6 +115,7 @@ DevicePanel::DevicePanel(QWidget* parent)
   connect(ui->edit_host, &QLineEdit::textEdited, mCarrier, &CameraClient::disconnect);
   connect(ui->spin_cameraPort, qOverload<int>(&QSpinBox::valueChanged), mCarrier, &CameraClient::disconnect);
   carrierLayout->addLayout(powerButtons);
+  carrierLayout->addWidget(mCarrierRefresh);
   ui->verticalLayout->insertWidget(2, carrierBox);
   connect(mCameraPowerOn, &QPushButton::clicked, this, [this] { mCarrier->setCameraPower(true); });
   connect(mCameraPowerOff, &QPushButton::clicked, this, [this] { mCarrier->setCameraPower(false); });
@@ -216,12 +219,33 @@ DevicePanel::DevicePanel(QWidget* parent)
     scroll->setWidget(page);
     mControlTabs->addTab(scroll, title);
   };
-  addPage("Camera", {ui->group_camera, diagnosticsBox});
   ui->gridEndpoints->removeWidget(ui->btn_lensPower);
-  addPage("Lens", {ui->btn_lensPower, ui->group_lens});
+  // Keep endpoint controls within a narrow pane, including long lens states.
+  for (auto widget : QList<QWidget*>{ui->label_host, ui->edit_host,
+       ui->label_lensPort, ui->spin_lensPort, ui->btn_lensConnect, ui->btn_lensDisconnect,
+       ui->label_cameraPort, ui->spin_cameraPort, ui->btn_cameraConnect, ui->btn_cameraDisconnect,
+       ui->label_lensState, ui->value_lensState, ui->btn_lensStatus,
+       ui->label_cameraState, ui->value_cameraState, ui->btn_cameraStatus})
+    ui->gridEndpoints->removeWidget(widget);
+  ui->gridEndpoints->addWidget(ui->label_host,0,0);
+  ui->gridEndpoints->addWidget(ui->edit_host,0,1,1,2);
+  ui->gridEndpoints->addWidget(ui->label_lensPort,1,0);
+  ui->gridEndpoints->addWidget(ui->spin_lensPort,1,1,1,2);
+  ui->gridEndpoints->addWidget(ui->btn_lensConnect,2,1);
+  ui->gridEndpoints->addWidget(ui->btn_lensDisconnect,2,2);
+  ui->gridEndpoints->addWidget(ui->label_cameraPort,3,0);
+  ui->gridEndpoints->addWidget(ui->spin_cameraPort,3,1,1,2);
+  ui->gridEndpoints->addWidget(ui->btn_cameraConnect,4,1);
+  ui->gridEndpoints->addWidget(ui->btn_cameraDisconnect,4,2);
+  ui->gridEndpoints->addWidget(ui->label_lensState,5,0);
+  ui->gridEndpoints->addWidget(ui->value_lensState,5,1);
+  ui->gridEndpoints->addWidget(ui->btn_lensStatus,5,2);
+  ui->gridEndpoints->addWidget(ui->label_cameraState,6,0);
+  ui->gridEndpoints->addWidget(ui->value_cameraState,6,1);
+  ui->gridEndpoints->addWidget(ui->btn_cameraStatus,6,2);
+  addPage("Camera + Lens", {ui->group_camera, ui->btn_lensPower, ui->group_lens, diagnosticsBox});
+  addPage("Power + Connection", {carrierBox, ui->group_connection});
   addPage("Environment", {ui->group_telemetry});
-  addPage("Power/status", {carrierBox});
-  addPage("Connection", {ui->group_connection});
   ui->verticalLayout->addWidget(mControlTabs, 1);
   auto quickConnect = new QHBoxLayout;
   auto connectBoth = new QPushButton("Connect both", this);
@@ -245,9 +269,9 @@ DevicePanel::DevicePanel(QWidget* parent)
   ui->label_overallStatus->setWordWrap(true);
 
   QSettings settings("HyperK", "SigmaControl");
-  ui->edit_host->setText(settings.value("host", "192.168.137.175").toString());
-  ui->spin_lensPort->setValue(settings.value("lensPort", 5000).toInt());
-  ui->spin_cameraPort->setValue(settings.value("cameraPort", 5001).toInt());
+  ui->edit_host->setText("192.168.50.2");
+  ui->spin_lensPort->setValue(5000);
+  ui->spin_cameraPort->setValue(5001);
 
   ui->spin_exposureMs->setValue(settings.value("exposureMs", 10.0).toDouble());
   ui->spin_gain->setValue(settings.value("gain", 0).toInt());
@@ -320,6 +344,9 @@ DevicePanel::DevicePanel(QWidget* parent)
   connect(mTelemetryTimer, &QTimer::timeout, this, &DevicePanel::updateTelemetryUi);
   mTelemetryTimer->start(ui->spin_telemetryIntervalMs->value());
 
+  connect(ui->edit_host, &QLineEdit::editingFinished, this, &DevicePanel::saveEndpointSettings);
+  connect(ui->spin_lensPort, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){saveEndpointSettings();});
+  connect(ui->spin_cameraPort, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){saveEndpointSettings();});
   onFocusSliderChanged(ui->focusValueSlider->value());
   onApertureSliderChanged(ui->apertureValueSlider->value());
   updateLensControlsForState();
@@ -336,7 +363,22 @@ void DevicePanel::setSlotIndex(int idx1_based)
   if (idx1_based < 1) idx1_based = 1;
   if (idx1_based > 8) idx1_based = 8;
   mSlotIndex1 = idx1_based;
-  ui->label_slotTitle->setText(QString("Device Slot #%1").arg(mSlotIndex1));
+  ui->label_slotTitle->setText(QString("PCH%1").arg(mSlotIndex1));
+  QSettings settings("HyperK", "SigmaControl");
+  settings.beginGroup(QString("pch%1").arg(mSlotIndex1));
+  const QSignalBlocker hostBlock(ui->edit_host), lensBlock(ui->spin_lensPort), cameraBlock(ui->spin_cameraPort);
+  ui->edit_host->setText(settings.value("host", QString("192.168.50.%1").arg(mSlotIndex1+1)).toString());
+  ui->spin_lensPort->setValue(settings.value("lensPort",5000).toInt());
+  ui->spin_cameraPort->setValue(settings.value("cameraPort",5001).toInt());
+}
+
+void DevicePanel::saveEndpointSettings()
+{
+  QSettings settings("HyperK", "SigmaControl");
+  settings.beginGroup(QString("pch%1").arg(mSlotIndex1));
+  settings.setValue("host", ui->edit_host->text().trimmed());
+  settings.setValue("lensPort", ui->spin_lensPort->value());
+  settings.setValue("cameraPort", ui->spin_cameraPort->value());
 }
 
 QString DevicePanel::lensEndpoint() const
@@ -560,9 +602,8 @@ void DevicePanel::setOverallStatusText()
 
 void DevicePanel::onLensConnectClicked()
 {
-  QSettings settings("HyperK", "SigmaControl");
-  settings.setValue("host", ui->edit_host->text().trimmed());
-  settings.setValue("lensPort", ui->spin_lensPort->value());
+  saveEndpointSettings();
+  mLens->setRecoveryEndpoint(ui->edit_host->text().trimmed(), ui->spin_cameraPort->value());
 
   const QString ep = lensEndpoint();
   if (!mLens->connectToEndpoint(ep))
@@ -717,9 +758,7 @@ void DevicePanel::decrementAperture()
 
 void DevicePanel::onCameraConnectClicked()
 {
-  QSettings settings("HyperK", "SigmaControl");
-  settings.setValue("host", ui->edit_host->text().trimmed());
-  settings.setValue("cameraPort", ui->spin_cameraPort->value());
+  saveEndpointSettings();
 
   const QString ep = cameraEndpoint();
   if (!mCam->connectToEndpoint(ep))
