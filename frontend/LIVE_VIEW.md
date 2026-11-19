@@ -172,3 +172,11 @@ The host camera bridge must be updated for this command. The fixed service must
 run as the same user with `Restart=always`; no sudo permission is added. Restart
 requests are rate-limited to one per 30 seconds. Only the Teensy bridge restarts;
 this does not restart sigma-carrier or change camera 12 V.
+
+
+Autofocus completion now explicitly reports the lens-confirmed final raw position.
+Cancel returns to the starting focus, rather than applying the best partial-search
+sample. Progress, each median sharpness score, commanded positions and the return
+phase are written to the normal session log. A return timeout reports uncertainty
+and the last reported position, without claiming the original focus was restored.
+An autofocus result remains visible if subsequent live frames time out.

@@ -25,6 +25,7 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(done.count(),1,15000);
     QVERIFY(done[0][0].toBool()); QCOMPARE(done[0][1].toInt(),9020);
     QVERIFY(!af.active());
+    QVERIFY(done[0][2].toString().contains("lens confirmed raw 9020"));
     QCOMPARE(moves[moves.size()-2],8988); QCOMPARE(moves.last(),9020);
     for(int p:moves) QVERIFY(p>=8904 && p<=9064);
   }
@@ -37,6 +38,20 @@ private slots:
     af.positionReceived(8968); QCOMPARE(moves.last()[0].toInt(),9000);
     QCOMPARE(done.count(),0); af.positionReceived(9000);
     QCOMPARE(done.count(),1); QVERIFY(!done[0][0].toBool());
+    QVERIFY(done[0][2].toString().contains("original focus restored at raw 9000 (lens confirmed)"));
+  }
+  void failedReturnDoesNotClaimOriginalWasRestored() {
+    AutofocusController af;
+    QSignalSpy done(&af,&AutofocusController::finished);
+    af.start(9000,64); af.cancel();
+    af.positionReceived(8968); // backoff reached, final 9000 requested
+    af.positionReceived(8970); // never reached requested position
+    QCOMPARE(done.count(),0);
+    QTRY_COMPARE_WITH_TIMEOUT(done.count(),1,12000);
+    QVERIFY(!done[0][0].toBool());
+    QCOMPARE(done[0][1].toInt(),8970);
+    QVERIFY(done[0][2].toString().contains("could not be verified"));
+    QVERIFY(!done[0][2].toString().contains("original focus restored"));
   }
   void invalidImageRestoresOriginal() {
     AutofocusController af;

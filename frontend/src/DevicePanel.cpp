@@ -650,6 +650,7 @@ bool DevicePanel::focusReady() const {
 }
 bool DevicePanel::requestFocus(int position) {
   if (!focusReady() || position < ui->focusValueSlider->minimum() || position > ui->focusValueSlider->maximum()) return false;
+  emit statusMessage(mSlotIndex1,QString("Autofocus lens TX: SF %1").arg(position));
   mLens->sendLine(QString("SF %1").arg(position));
   mLens->sendLine("ST");
   return true;

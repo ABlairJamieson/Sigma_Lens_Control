@@ -76,8 +76,9 @@ No lens movement, camera power switching or TCP commands are issued by this tool
 
 If an upgrade changes the ID, the explicitly supplied --camera-id is the intended
 new ID. Successful upload is logged in release.json with the USB serial, UTC time
-and exact verification status. No hardware upload has been validated yet with
-this new updater; source/build and failure handling were tested without hardware.
+and exact verification status. A Teensy 4.0 upload through pch5 was verified on 2026-11-19 with firmware
+2.0.0, camera ID 7 and USB serial 19822090. Source/build and failure handling also
+have hardware-free tests.
 
 ## Offline and explicit tools
 

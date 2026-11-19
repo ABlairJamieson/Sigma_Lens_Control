@@ -172,7 +172,9 @@ MainWindow::MainWindow(QWidget *parent)
     if (!panel || !panel->requestFocus(position)) mAutofocus->cancel("Lens unavailable; focus position uncertain");
   });
   connect(mAutofocus,&AutofocusController::freshFrameRequested,mLive,&LiveViewClient::setFocusToken);
-  connect(mAutofocus,&AutofocusController::progress,mLiveStatus,&QLabel::setText);
+  connect(mAutofocus,&AutofocusController::progress,this,[this](const QString& message) {
+    mLiveStatus->setText(message); onPanelStatusMessage(mFocusSlot,message);
+  });
   connect(mAutofocus,&AutofocusController::finished,this,[this](bool, int, const QString& message) {
     finishAutofocus(message);
   });
@@ -230,7 +232,9 @@ MainWindow::MainWindow(QWidget *parent)
   connect(mLive, &LiveViewClient::failed, this, [this](const QString& message) {
     if (mAutofocus->active()) mAutofocus->cancel(message);
     else if (mFocusPreparing) finishAutofocus(message);
-    mLiveToggle->setChecked(false); mLiveStatus->setText(message); onPanelStatusMessage(mPreviewSlot, message);
+    mLiveToggle->setChecked(false);
+    mLiveStatus->setText((mFocusResult.isEmpty() ? QString() : mFocusResult+"\n")+message);
+    onPanelStatusMessage(mPreviewSlot, message);
   });
   connect(ui->tabWidget_devices, &QTabWidget::currentChanged, this, [this](int index) {
     if ((mAutofocus->active() || mFocusPreparing) && index+1 != mFocusSlot) {
@@ -354,6 +358,8 @@ void MainWindow::beginAutofocus() {
     mLiveStatus->setText("Autofocus needs a ready lens and connected camera; request fresh lens status first."); return;
   }
   mFocusResult.clear();
+  onPanelStatusMessage(mPreviewSlot,QString("Autofocus requested: starting raw %1, search ±%2; checking fresh ROI frames")
+    .arg(panel->actualFocus()).arg(mFocusRadius->value()));
   mFocusSlot=mPreviewSlot; mBeforeFocusView=mFocusView->isChecked();
   mFocusView->setChecked(true);
   if (!mLiveToggle->isChecked()) mLiveToggle->setChecked(true);

@@ -31,7 +31,7 @@ void AutofocusController::start(int current,int radius) {
   if (current<8232 || current>12777) {
     emit finished(false,current,"Lens position outside supported range; no movement"); return;
   }
-  mOriginal=std::clamp(current,8232,12777);
+  mOriginal=std::clamp(current,8232,12777); mLastPosition=mOriginal;
   mLow=std::max(8232,mOriginal-std::clamp(radius,16,4545));
   mHigh=std::min(12777,mOriginal+std::clamp(radius,16,4545));
   mStage=0; mBest=mOriginal; mBestScore=-1; mWorstScore=1e300;
@@ -45,7 +45,7 @@ void AutofocusController::nextPosition() {
       mStage=1; nextPosition(); return;
     }
     if (mBestScore <= 1 || mBestScore < mWorstScore*1.05) {
-      cancel("Insufficient focus contrast; original position restored"); return;
+      cancel("Insufficient focus contrast"); return;
     }
     returnTo(mBest,true,QString("Autofocus complete: raw %1, sharpness %2%3")
       .arg(mBest).arg(mBestScore,0,'f',1)
@@ -60,8 +60,10 @@ void AutofocusController::nextPosition() {
   emit moveRequested(mAckTarget);
 }
 void AutofocusController::positionReceived(int position) {
-  if (!active() || position!=mAckTarget) return;
-  if (mState==Returning) { complete(); return; }
+  if (!active()) return;
+  mLastPosition=position;
+  if (position!=mAckTarget) return;
+  if (mState==Returning) { mPositionConfirmed=true; complete(); return; }
   if (mState==ReturningBackoff) {
     mState=Returning; mAckTarget=mTarget; mDeadline.start(10000); emit moveRequested(mTarget); return;
   }
@@ -85,10 +87,15 @@ void AutofocusController::frameReceived(const QJsonObject& frame) {
   const double median=mSamples[1];
   if (median>mBestScore) { mBestScore=median; mBest=mTarget; }
   mWorstScore=std::min(mWorstScore,median);
+  emit progress(QString("Autofocus %1 sample: raw %2, sharpness %3; best raw %4, sharpness %5")
+    .arg(mStage ? "fine" : "coarse").arg(mTarget).arg(median,0,'f',1).arg(mBest).arg(mBestScore,0,'f',1));
   ++mIndex; nextPosition();
 }
 void AutofocusController::returnTo(int position,bool success,const QString& message) {
   mSettle.stop(); mTotal.stop(); mReturnMessage=message; mReturnSuccess=success;
+  mPositionConfirmed=false;
+  emit progress(QString("%1: returning to %2 raw %3; waiting for lens confirmation")
+    .arg(success ? "Autofocus search finished" : message).arg(success ? "best focus" : "original focus").arg(position));
   mTarget=position; mAckTarget=std::max(8232,position-32);
   mState=ReturningBackoff; mDeadline.start(10000);
   emit moveRequested(mAckTarget);
@@ -100,5 +107,9 @@ void AutofocusController::cancel(const QString& reason) {
 }
 void AutofocusController::complete() {
   mDeadline.stop(); mSettle.stop(); mTotal.stop(); mState=Idle;
-  emit finished(mReturnSuccess,mTarget,mReturnMessage);
+  if (mPositionConfirmed) {
+    mReturnMessage += mReturnSuccess ? QString("; lens confirmed raw %1").arg(mTarget)
+      : QString("; original focus restored at raw %1 (lens confirmed)").arg(mTarget);
+  }
+  emit finished(mReturnSuccess,mPositionConfirmed ? mTarget : mLastPosition,mReturnMessage);
 }

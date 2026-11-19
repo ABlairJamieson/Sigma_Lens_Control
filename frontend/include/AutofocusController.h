@@ -28,7 +28,8 @@ private:
   int mOriginal=0, mLow=0, mHigh=0, mIndex=0, mTarget=0, mAckTarget=0, mStage=0, mBest=0;
   double mBestScore=-1, mWorstScore=1e300;
   QString mToken, mReturnMessage;
-  bool mReturnSuccess=false;
+  bool mReturnSuccess=false, mPositionConfirmed=false;
+  int mLastPosition=0;
   quint64 mGeneration=0;
   void grid(int low, int high);
   void nextPosition();
