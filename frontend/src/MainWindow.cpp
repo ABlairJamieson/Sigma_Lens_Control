@@ -8,6 +8,7 @@
 #include <QPixmap>
 #include <QImageReader>
 #include <QScrollBar>
+#include <QScrollArea>
 #include <QFileInfo>
 #include <QDesktopServices>
 #include <QUrl>
@@ -27,6 +28,13 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QKeyEvent>
+#include <QCloseEvent>
+#include <QSpinBox>
+#include <QTabBar>
+#include <QSignalBlocker>
+#include "AutofocusController.h"
+#include <algorithm>
+#include <QUuid>
 
 
 void MainWindow::openLogFile()
@@ -84,36 +92,128 @@ MainWindow::MainWindow(QWidget *parent)
     ui->label_mainPreview->setCursor(Qt::PointingHandCursor);
     ui->label_mainPreview->setToolTip("Double-click for fullscreen. When live view is off, click to open the last captured TIFF.");
     ui->label_mainPreview->setScaledContents(false);
+    ui->label_mainPreview->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Ignored);
   }
 
 
-  if (ui->text_mainDebug)
+  if (ui->text_mainDebug) {
     ui->text_mainDebug->setReadOnly(true);
+    ui->text_mainDebug->setMaximumHeight(110);
+  }
 
 
   
 
   mEnvironmentHistory = new EnvironmentHistory(this);
-  ui->tabWidget_devices->addTab(mEnvironmentHistory, "Environment history");
-  ui->tabWidget_devices->addTab(mEnvironmentHistory->createMotionTab(this), "Motion history");
+  auto historyTab = [this](QWidget* content, const QString& title) {
+    auto scroll = new QScrollArea(this); scroll->setWidgetResizable(true); scroll->setWidget(content);
+    ui->tabWidget_devices->addTab(scroll,title);
+  };
+  historyTab(mEnvironmentHistory, "Environment history");
+  historyTab(mEnvironmentHistory->createMotionTab(this), "Motion history");
   connect(mEnvironmentHistory, &EnvironmentHistory::loggingError, this, [this](const QString& message) { onPanelStatusMessage(0, message); });
   mLive = new LiveViewClient(this);
+  mAutofocus = new AutofocusController(this);
   auto liveControls = new QHBoxLayout;
   mLiveToggle = new QCheckBox("Live view", this); mLiveToggle->setObjectName("check_liveView");
   mFullscreenButton = new QPushButton("Fullscreen", this); mFullscreenButton->setObjectName("btn_fullscreen");
   liveControls->addWidget(mLiveToggle); liveControls->addStretch(); liveControls->addWidget(mFullscreenButton);
   ui->verticalLayout_previewBox->insertLayout(0, liveControls);
+  auto settingsRow = new QHBoxLayout;
+  mFollowCapture = new QCheckBox("Use capture exposure/gain", this); mFollowCapture->setChecked(true);
+  mFollowCapture->setObjectName("liveFollowCapture");
+  mLiveExposure = new QSpinBox(this); mLiveExposure->setRange(1,2000); mLiveExposure->setSuffix(" ms");
+  mLiveExposure->setObjectName("liveExposure"); mLiveExposure->setMaximumWidth(115);
+  mLiveExposure->setToolTip("Live exposure is limited to 2 seconds. Capture exposure is unchanged.");
+  mLiveGain = new QSpinBox(this); mLiveGain->setRange(0,1000); mLiveGain->setPrefix("Gain ");
+  mLiveGain->setObjectName("liveGain"); mLiveGain->setMaximumWidth(110);
+  settingsRow->addWidget(mFollowCapture); settingsRow->addWidget(mLiveExposure); settingsRow->addWidget(mLiveGain);
+  ui->verticalLayout_previewBox->insertLayout(1, settingsRow);
+  auto focusRow = new QHBoxLayout;
+  mFocusView = new QCheckBox("Focus detail (crop)",this); mFocusView->setObjectName("focusDetail");
+  mFocusView->setToolTip("Unbinned central 1024 × 768 sensor region. Full view uses sensor binning.");
+  mFocusRadius = new QSpinBox(this); mFocusRadius->setRange(16,4545); mFocusRadius->setValue(256);
+  mFocusRadius->setObjectName("autofocusRadius"); mFocusRadius->setMaximumWidth(110);
+  mFocusRadius->setPrefix("± "); mFocusRadius->setSuffix(" raw");
+  mFocusRadius->setToolTip("Autofocus search radius around current position; start near focus. Uses central scene texture.");
+  mAutofocusButton = new QPushButton("Autofocus",this); mAutofocusButton->setObjectName("autofocusStart");
+  mCancelFocus = new QPushButton("Cancel",this); mCancelFocus->setEnabled(false);
+  mCancelFocus->setObjectName("autofocusCancel");
+  focusRow->addWidget(mFocusView); focusRow->addWidget(mFocusRadius);
+  focusRow->addWidget(mAutofocusButton); focusRow->addWidget(mCancelFocus);
+  ui->verticalLayout_previewBox->insertLayout(2,focusRow);
+  mLiveStatus = new QLabel("Live view idle — exposure limited to 2 s",this);
+  mLiveStatus->setObjectName("liveStatus"); mLiveStatus->setWordWrap(true);
+  ui->verticalLayout_previewBox->insertWidget(3,mLiveStatus);
+  connect(mFollowCapture,&QCheckBox::toggled,this,[this] { updateLiveSettings(); });
+  connect(mLiveExposure,qOverload<int>(&QSpinBox::valueChanged),this,[this] { updateLiveSettings(); });
+  connect(mLiveGain,qOverload<int>(&QSpinBox::valueChanged),this,[this] { updateLiveSettings(); });
+  connect(mFocusView,&QCheckBox::toggled,mLive,&LiveViewClient::setFocusView);
+  connect(mAutofocusButton,&QPushButton::clicked,this,&MainWindow::beginAutofocus);
+  mFocusPrepareDeadline.setSingleShot(true);
+  connect(&mFocusPrepareDeadline,&QTimer::timeout,this,[this] {
+    finishAutofocus("No fresh focus-capable frame; update the host camera bridge or check the camera connection");
+  });
+  connect(mCancelFocus,&QPushButton::clicked,this,[this] {
+    if (mFocusPreparing) finishAutofocus("Autofocus cancelled before lens movement");
+    else mAutofocus->cancel();
+  });
+  connect(mAutofocus,&AutofocusController::moveRequested,this,[this](int position) {
+    auto panel=panelBySlot1(mFocusSlot);
+    if (!panel || !panel->requestFocus(position)) mAutofocus->cancel("Lens unavailable; focus position uncertain");
+  });
+  connect(mAutofocus,&AutofocusController::freshFrameRequested,mLive,&LiveViewClient::setFocusToken);
+  connect(mAutofocus,&AutofocusController::progress,mLiveStatus,&QLabel::setText);
+  connect(mAutofocus,&AutofocusController::finished,this,[this](bool, int, const QString& message) {
+    finishAutofocus(message);
+  });
+  connect(mLive,&LiveViewClient::frameMetadata,this,[this](const QJsonObject& metadata) {
+    if (mFocusPreparing) {
+      if (!metadata.contains("focus_token") || !metadata.value("focus_score").isDouble()) {
+        finishAutofocus("Host bridge does not support autofocus; update it first"); return;
+      }
+      if (metadata.value("focus_token").toString()!=mFocusPrepareToken) return;
+      if (metadata.value("view_mode").toString()!="focus") {
+        finishAutofocus("Host bridge does not support autofocus; update it first"); return;
+      }
+      if (metadata.value("focus_score").toDouble()<=1 || metadata.value("mean_level").toDouble(-1)<5 ||
+          metadata.value("mean_level").toDouble()>245 || metadata.value("saturated_fraction").toDouble(1)>.05) {
+        finishAutofocus("Focus image is dark, saturated or has not enough detail; adjust exposure/subject and retry"); return;
+      }
+      mFocusPreparing=false; mFocusPrepareDeadline.stop();
+      auto panel=panelBySlot1(mFocusSlot);
+      if (!panel || !panel->focusReady()) { finishAutofocus("Lens status is not fresh; request lens status and retry"); return; }
+      mAutofocus->start(panel->actualFocus(),mFocusRadius->value()); return;
+    }
+    if (mAutofocus->active()) { mAutofocus->frameReceived(metadata); return; }
+    mLiveStatus->setToolTip(QString("SDK frame read (including wait): %1 ms\nImage processing/JPEG: %2 ms\nRequest round trip: %3 ms\nJPEG payload: %4 bytes")
+      .arg(metadata.value("acquisition_ms").toDouble(),0,'f',1)
+      .arg(metadata.value("processing_ms").toDouble(),0,'f',1)
+      .arg(metadata.value("round_trip_ms").toDouble(),0,'f',1)
+      .arg(metadata.value("nbytes").toInt()));
+    const double ms=metadata.value("frame_interval_ms").toDouble();
+    mLiveStatus->setText((mFocusResult.isEmpty() ? QString() : mFocusResult+"\n")+QString("%1 fps | %2 ms / gain %3 | sensor %4×%5 | sharpness %6%7")
+      .arg(ms>0 ? 1000.0/ms : 0,0,'f',1).arg(metadata.value("exposure_us").toInt()/1000.0,0,'f',1)
+      .arg(metadata.value("gain").toInt()).arg(metadata.value("sensor_w").toInt())
+      .arg(metadata.value("sensor_h").toInt()).arg(metadata.value("focus_score").toDouble(),0,'f',1)
+      .arg(mFollowCapture->isChecked() && panelBySlot1(mPreviewSlot)->cameraSettings().exposureMs>2000 ? " | live capped at 2 s" : ""));
+  });
   connect(mLiveToggle, &QCheckBox::toggled, this, [this](bool on) { if (on) startLive(); else mLive->stop(); });
   connect(mFullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
   connect(mLive, &LiveViewClient::frameReady, this, [this](const QImage& image) {
     mPreviewFrames[mPreviewSlot-1] = image; renderPreview();
   });
   connect(mLive, &LiveViewClient::failed, this, [this](const QString& message) {
-    mLiveToggle->setChecked(false); onPanelStatusMessage(mPreviewSlot, message);
+    if (mAutofocus->active()) mAutofocus->cancel(message);
+    else if (mFocusPreparing) finishAutofocus(message);
+    mLiveToggle->setChecked(false); mLiveStatus->setText(message); onPanelStatusMessage(mPreviewSlot, message);
   });
   connect(ui->tabWidget_devices, &QTabWidget::currentChanged, this, [this](int index) {
+    if ((mAutofocus->active() || mFocusPreparing) && index+1 != mFocusSlot) {
+      QSignalBlocker blocker(ui->tabWidget_devices); ui->tabWidget_devices->setCurrentIndex(mFocusSlot-1); return;
+    }
     if (index < 0 || index >= 8 || index+1 == mPreviewSlot) return;
-    mLive->stop(); mPreviewSlot = index+1; renderPreview(); updatePreviewControls();
+    mFocusResult.clear(); mLive->stop(); mPreviewSlot = index+1; renderPreview(); updatePreviewControls();
     if (mLiveToggle->isChecked()) startLive();
   });
   initPanels();
@@ -150,6 +250,12 @@ void MainWindow::initPanels()
     p->setSlotIndex(i + 1);
     mPanels.push_back(p);
 
+    connect(p,&DevicePanel::cameraSettingsChanged,this,[this,p] {
+      if (p->slotIndex()==mPreviewSlot && !mAutofocus->active() && !mFocusPreparing) updateLiveSettings();
+    });
+    connect(p,&DevicePanel::focusPositionReceived,this,[this,p](int position) {
+      if (p->slotIndex()==mFocusSlot) mAutofocus->positionReceived(position);
+    });
     connect(p, &DevicePanel::cameraCaptureBusy, this, [this](int slot, bool busy) {
       if (slot != mPreviewSlot) return;
       if (busy) mLive->stop();
@@ -199,13 +305,74 @@ void MainWindow::startLive() {
   auto panel = panelBySlot1(mPreviewSlot);
   if (!panel || !panel->cameraConnected()) { mLiveToggle->setChecked(false); return; }
   if (panel->cameraBusy()) return;
-  const auto settings = panel->cameraSettings();
-  mLive->start(panel->connectedCameraEndpoint(), qRound(settings.exposureMs*1000), settings.gain);
+  updateLiveSettings();
+  mLive->start(panel->connectedCameraEndpoint(), mLiveExposure->value()*1000, mLiveGain->value());
+}
+void MainWindow::updateLiveSettings() {
+  if (!mLiveExposure) return;
+  const bool follow=mFollowCapture->isChecked();
+  if (follow) {
+    if (auto panel=panelBySlot1(mPreviewSlot)) {
+      QSignalBlocker exposureBlock(mLiveExposure), gainBlock(mLiveGain);
+      const auto settings=panel->cameraSettings();
+      mLiveExposure->setValue(std::clamp(qRound(settings.exposureMs),1,2000));
+      mLiveGain->setValue(settings.gain);
+    }
+  }
+  mLiveExposure->setEnabled(!follow && !mAutofocus->active() && !mFocusPreparing);
+  mLiveGain->setEnabled(!follow && !mAutofocus->active() && !mFocusPreparing);
+  mLive->setSettings(mLiveExposure->value()*1000,mLiveGain->value());
+}
+void MainWindow::beginAutofocus() {
+  auto panel=panelBySlot1(mPreviewSlot);
+  if (!panel || !panel->focusReady() || !panel->cameraConnected() || panel->cameraBusy()) {
+    mLiveStatus->setText("Autofocus needs a ready lens and connected camera; request fresh lens status first."); return;
+  }
+  mFocusResult.clear();
+  mFocusSlot=mPreviewSlot; mBeforeFocusView=mFocusView->isChecked();
+  mFocusView->setChecked(true);
+  if (!mLiveToggle->isChecked()) mLiveToggle->setChecked(true);
+  panel->setAutofocusActive(true);
+  ui->group_global->setEnabled(false);
+  ui->tabWidget_devices->tabBar()->setEnabled(false);
+  mAutofocusButton->setEnabled(false); mCancelFocus->setEnabled(true);
+  mFocusView->setEnabled(false); mFocusRadius->setEnabled(false);
+  mLiveToggle->setEnabled(false); mFollowCapture->setEnabled(false);
+  mLiveExposure->setEnabled(false); mLiveGain->setEnabled(false);
+  mFocusPreparing=true;
+  mFocusPrepareToken="preflight-"+QUuid::createUuid().toString(QUuid::WithoutBraces);
+  mLive->setFocusToken(mFocusPrepareToken); mFocusPrepareDeadline.start(30000);
+  mLiveStatus->setText("Autofocus: checking fresh focus-detail frames before lens movement");
+  updateCaptureAllEnabled();
+}
+void MainWindow::finishAutofocus(const QString& message) {
+  mFocusPreparing=false; mFocusPrepareDeadline.stop();
+  ui->group_global->setEnabled(true);
+  if (auto panel=panelBySlot1(mFocusSlot)) panel->setAutofocusActive(false);
+  ui->tabWidget_devices->tabBar()->setEnabled(true);
+  mLive->setFocusToken(QString()); mFocusView->setChecked(mBeforeFocusView);
+  mCancelFocus->setEnabled(false); mFocusView->setEnabled(true); mFocusRadius->setEnabled(true);
+  mFollowCapture->setEnabled(true);
+  mFocusResult=message;
+  mLiveStatus->setText(message); onPanelStatusMessage(mFocusSlot,message);
+  updateLiveSettings(); updatePreviewControls(); updateCaptureAllEnabled();
+  if (mCloseAfterFocus) { mCloseAfterFocus=false; QTimer::singleShot(0,this,&QWidget::close); }
+}
+void MainWindow::closeEvent(QCloseEvent* event) {
+  if (mAutofocus->active() || mFocusPreparing) {
+    event->ignore(); mCloseAfterFocus=true;
+    if (mFocusPreparing) finishAutofocus("Autofocus cancelled before lens movement");
+    else mAutofocus->cancel("Window closing: returning to original focus");
+    return;
+  }
+  QMainWindow::closeEvent(event);
 }
 void MainWindow::updatePreviewControls() {
   auto panel = panelBySlot1(mPreviewSlot);
   const bool connected = panel && panel->cameraConnected();
-  mLiveToggle->setEnabled(connected);
+  mLiveToggle->setEnabled(connected && !mAutofocus->active() && !mFocusPreparing);
+  mAutofocusButton->setEnabled(connected && !mAutofocus->active() && !mFocusPreparing && !panel->cameraBusy());
+  if (!connected && mAutofocus->active()) mAutofocus->cancel("Camera disconnected");
   if (!connected) mLiveToggle->setChecked(false);
 }
 void MainWindow::renderPreview() {

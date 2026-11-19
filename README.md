@@ -341,8 +341,12 @@ Turning it off keeps the latest live frame; a subsequent still capture replaces 
 Changing camera slots restores that slot's latest preview. The **Fullscreen** button
 (or double-clicking the preview) displays live or frozen imagery fitted to the screen;
 press **Esc** to return. Fullscreen requests a screen-sized stream, capped at 4K.
-Live view uses the slot's exposure/gain when enabled (preview exposure is capped at
-2 seconds); still captures retain the requested full exposure and RAW16 resolution.
+Live view follows changes to the slot's exposure/gain while running, or can use
+separate live settings (preview exposure is capped at 2 seconds). Still captures
+retain the requested full exposure and RAW16 resolution. Focus detail provides a
+small unbinned central crop; the new Autofocus button performs a bounded
+contrast search using fresh frames and actual lens-position feedback.
+See [live view, autofocus and hardware-test notes](frontend/LIVE_VIEW.md).
 Capturing through the GUI pauses and then resumes live view automatically.
 
 Update/restart `asi-bridge` on each BeagleY before enabling live view; older bridges
@@ -369,8 +373,9 @@ The optional v1.1 carrier service owns camera 12 V enable and reads two INA226
 monitors plus one J602 TMP117 at 0x48. Provision with
 `sudo python3 cm5_setup/install.py --sdk PATH_TO_SDK --camera-id ID --carrier-v1-1`.
 Camera 12 V defaults OFF after boot. SigmaControl provides per-camera power
-buttons and voltage/current/temperature readbacks through the existing ASI
-connection on port 5001; no extra port or Teensy firmware change is needed.
+buttons and voltage/current/temperature readbacks on Power/status. Its independent
+**Connect host** connection uses the existing port 5001 and works with the ASI
+camera disconnected or off. No extra port or Teensy firmware change is needed.
 See [carrier setup and protocol](cm5_setup/CARRIER_CONTROL.md).
 
 On the DAQ desktop, launch the frontend with `frontend/run_sigma_control.sh`

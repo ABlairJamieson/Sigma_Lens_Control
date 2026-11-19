@@ -67,6 +67,7 @@ bool CameraClient::connectToEndpoint(const QString& endpoint)
   if (!mSock->waitForConnected(1500))
     return false;
 
+  mEndpoint = target;
   mStatusPending = false;
   mDiagnosticsTimer.start();
   requestStatus();
@@ -115,7 +116,7 @@ void CameraClient::requestStatus()
   if (!isConnected() || isBusy() || mStatusPending) return;
   mStatusPending = true;
   QJsonObject obj;
-  obj["cmd"] = "status";
+  obj["cmd"] = mCarrierOnly ? "carrier_read" : "status";
   sendJsonLine(obj);
 }
 
@@ -364,8 +365,8 @@ void CameraClient::onReadyRead()
     const QString cmd = obj.value("cmd").toString();
     const bool ok = obj.value("ok").toBool(false);
 
-    if (cmd == "status" || obj.contains("connected")) mStatusPending = false;
-    if (cmd == "status") {
+    if (cmd == "status" || cmd == "carrier_read" || obj.contains("connected")) mStatusPending = false;
+    if (cmd == "status" || cmd == "carrier_read") {
       mCameraReady = obj.value("connected").toBool(false);
       emit cameraReadyChanged(mCameraReady);
       if (!obj.value("carrier").isObject())
@@ -387,6 +388,8 @@ void CameraClient::onReadyRead()
 
     if (!ok)
     {
+      if (mCarrierOnly && !obj.value("carrier").isObject())
+        emit carrierReceived(QJsonObject{{"available",false},{"error",obj.value("error").toString("Bridge has no carrier support")}});
       mStatusPending = false;
       emit statusMessage("Camera error: " + obj.value("error").toString());
       finishCapture();

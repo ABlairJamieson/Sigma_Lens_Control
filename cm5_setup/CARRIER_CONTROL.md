@@ -130,12 +130,14 @@ power. After enabling, discovery retries every five seconds. There is no new
 network listener and the Teensy bridge/firmware are unchanged. The service socket
 continues to limit local hardware access to root/the photogrammetry group.
 
-SigmaControl's existing per-camera connection polls status every five seconds
-when idle. Each camera panel shows camera enable/fault, measured camera 12 V and
+SigmaControl's Power/status tab opens an independent host connection on the same
+port with **Connect host**, polling `carrier_read` every five seconds without
+opening an ASI camera. Each camera panel shows camera enable/fault, measured camera 12 V and
 carrier 5 V voltage/current, plus housing TMP117 temperature. Only camera 12 V is
 switchable; the computer's 5 V is monitoring-only. Power controls are unavailable
 on old bridges, disconnected/stale connections, or during capture/live view.
-Long captures can pause polls on their connection; old readings are marked stale.
+Long captures do not block this independent carrier polling path; missing replies
+are marked stale. Disconnecting the ASI camera leaves housing telemetry connected.
 
 ## Update an existing pch2 installation
 
@@ -175,7 +177,7 @@ acquisition and ASI diagnostics stay together. Power/status shows camera 12 V
 switching, eFuse fault, both voltage/current monitors, and housing TMP117.
 Each page scrolls independently for smaller displays.
 
-Power/status explains why switching is unavailable: camera bridge disconnected,
+Power/status explains why switching is unavailable: host connection disconnected,
 live view active, capture/power operation busy, stale telemetry, missing service,
 or an unsupported host. Refresh readings requests a new status on the existing
 camera connection. A disabled power button does not itself mean camera 12 V is off.

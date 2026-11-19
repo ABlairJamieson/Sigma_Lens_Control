@@ -14,7 +14,7 @@
 class FakeBridge : public QTcpServer {
 public:
   bool enabled=false, supported=true;
-  int powerCommands=0;
+  int powerCommands=0, cameraStatusCommands=0, carrierCommands=0;
   FakeBridge() {
     listen(QHostAddress::LocalHost);
     connect(this,&QTcpServer::newConnection,this,[this] {
@@ -24,6 +24,8 @@ public:
           while (socket->canReadLine()) {
             auto req=QJsonDocument::fromJson(socket->readLine()).object();
             const auto cmd=req["cmd"].toString();
+            if (cmd=="status") ++cameraStatusCommands;
+            if (cmd=="carrier_read") ++carrierCommands;
             if (cmd=="camera_power") { enabled=req["enabled"].toBool(); ++powerCommands; }
             QJsonObject reply{{"ok",true},{"cmd",cmd},{"connected",enabled},
                               {"diagnostics",QJsonObject{{"live_active",false}}}};
@@ -49,21 +51,23 @@ private slots:
     QSettings::setPath(QSettings::NativeFormat,QSettings::UserScope,settings.path());
     FakeBridge first, second;
     DevicePanel panel, other;
-    auto cam=panel.findChild<CameraClient*>();
-    auto cam2=other.findChild<CameraClient*>();
+    auto cam=panel.findChild<CameraClient*>("cameraClient");
+    auto carrier=panel.findChild<CameraClient*>("carrierClient");
+    auto cam2=other.findChild<CameraClient*>("carrierClient");
     auto on=panel.findChild<QPushButton*>("cameraPowerOn");
     auto off=panel.findChild<QPushButton*>("cameraPowerOff");
     auto label=panel.findChild<QLabel*>("carrierReadings");
     QVERIFY(cam && cam2 && on && off && label);
     QVERIFY(!on->isEnabled());
-    QVERIFY(cam->connectToEndpoint(first.endpoint()));
+    QVERIFY(carrier->connectToEndpoint(first.endpoint()));
     QVERIFY(cam2->connectToEndpoint(second.endpoint()));
     QTRY_VERIFY(on->isEnabled());
     QTRY_VERIFY(label->text().contains("22.25"));
     QVERIFY(!cam->cameraReady());
     on->click();
     QTRY_VERIFY(first.enabled);
-    QTRY_VERIFY(cam->cameraReady());
+    QVERIFY(!cam->isConnected()); // Power works without opening the camera connection.
+    QCOMPARE(first.cameraStatusCommands,0);
     QTRY_VERIFY(label->text().contains("12.220"));
     QVERIFY(!second.enabled);
     QCOMPARE(second.powerCommands,0);
@@ -86,21 +90,25 @@ private slots:
         QVERIFY(panel.grab().save(qEnvironmentVariable("CARRIER_SCREENSHOT")+QString::number(page)+".png"));
       }
     }
-    cam->diagnosticsReceived(QJsonObject{{"live_active",true}});
+    carrier->diagnosticsReceived(QJsonObject{{"live_active",true}});
     QVERIFY(!on->isEnabled());
     QVERIFY(panel.findChild<QLabel*>("carrierAvailability")->text().contains("Stop live view"));
-    cam->diagnosticsReceived(QJsonObject{{"live_active",false}});
+    carrier->diagnosticsReceived(QJsonObject{{"live_active",false}});
     QVERIFY(on->isEnabled());
-    cam->carrierReceived(QJsonObject{{"available",false},{"platform","beagley_ai"},
+    carrier->carrierReceived(QJsonObject{{"available",false},{"platform","beagley_ai"},
       {"error","CM5 carrier not supported on BeagleY"}});
     QVERIFY(!on->isEnabled());
     QVERIFY(panel.findChild<QLabel*>("carrierAvailability")->text().contains("BeagleY"));
     // Independent sensor errors remain visible without disabling power control.
-    cam->carrierReceived(QJsonObject{{"available",true},{"camera_enabled",false},
+    carrier->carrierReceived(QJsonObject{{"available",true},{"camera_enabled",false},
       {"camera_fault_active",false},{"temperature",QJsonObject{{"error","sensor NACK"}}}});
     QVERIFY(label->text().contains("sensor NACK"));
     QVERIFY(on->isEnabled());
+    QVERIFY(cam->connectToEndpoint(first.endpoint()));
+    QTRY_VERIFY(first.cameraStatusCommands>0);
     cam->disconnect();
+    QVERIFY(on->isEnabled()); // Camera disconnect does not disconnect host telemetry.
+    carrier->disconnect();
     QVERIFY(!on->isEnabled());
     QVERIFY(label->text().contains("cleared"));
     cam2->disconnect();
@@ -108,8 +116,9 @@ private slots:
   void legacyBridgeDisablesPowerControls() {
     FakeBridge legacy; legacy.supported=false;
     DevicePanel panel;
-    auto cam=panel.findChild<CameraClient*>();
-    QVERIFY(cam->connectToEndpoint(legacy.endpoint()));
+    auto cam=panel.findChild<CameraClient*>("cameraClient");
+    auto carrier=panel.findChild<CameraClient*>("carrierClient");
+    QVERIFY(carrier->connectToEndpoint(legacy.endpoint()));
     QTRY_VERIFY(panel.findChild<QLabel*>("carrierReadings")->text().contains("no carrier support"));
     QVERIFY(!panel.findChild<QPushButton*>("cameraPowerOn")->isEnabled());
     cam->disconnect();

@@ -212,6 +212,74 @@ class CameraFeatures(unittest.TestCase):
         self.assertIsNone(b.info)
         self.assertIsNone(b.controls)
 
+    def test_live_controls_update_without_video_restart(self):
+        b = bridge()
+        owner = MemoryConnection()
+        b.live_frame({"exposure_us": 10000, "gain": 7}, owner)
+        original_start = b.cam.start_video_capture
+        b.cam.start_video_capture = lambda: self.fail("Changing exposure/gain restarted video")
+        owner.data.clear()
+        b.live_frame({"exposure_us": 25000, "gain": 90}, owner)
+        header = json.loads(bytes(owner.data).split(b"\n", 1)[0])
+        self.assertEqual((header["exposure_us"], header["gain"]), (25000, 90))
+        self.assertTrue(b.cam.video)
+        b.cam.start_video_capture = original_start
+        self.assertEqual(b.state["exposure_us"], 30000)  # still settings remain separate
+
+    def test_focus_roi_fresh_tokens_and_uncompressed_metric(self):
+        b = bridge()
+        b.info.update(MaxWidth=9576, MaxHeight=6388)
+        starts = []
+        b.cam.set_roi_start_position = lambda x, y: starts.append((x, y))
+        count = []
+        def frame(timeout):
+            count.append(1)
+            # Deterministic scene detail, identical for every frame.
+            rng = np.random.default_rng(42)
+            return rng.integers(30, 220, (b.cam.roi[1], b.cam.roi[0]), dtype=np.uint8)
+        b.cam.capture_video_frame = frame
+        owner = MemoryConnection()
+        req = {"view_mode": "focus", "focus_token": "position-1", "jpeg_quality": 30}
+        b.live_frame(req, owner)
+        first = json.loads(bytes(owner.data).split(b"\n", 1)[0])
+        self.assertEqual(b.cam.roi, [1024, 768, 1, SDK.ASI_IMG_RAW8])
+        self.assertEqual(starts, [(4272, 2810)])
+        self.assertEqual(len(count), 3)  # two stale/startup frames discarded
+        owner.data.clear()
+        b.live_frame(dict(req, jpeg_quality=95, max_width=640), owner)
+        second = json.loads(bytes(owner.data).split(b"\n", 1)[0])
+        self.assertEqual(first["focus_score"], second["focus_score"])  # before resize/JPEG
+        self.assertGreater(first["focus_score"], 0)
+        self.assertEqual(len(count), 4)
+        owner.data.clear()
+        b.live_frame(dict(req, focus_token="position-2"), owner)
+        self.assertEqual(len(count), 7)
+
+    def test_fresh_focus_timeout_budget_is_not_reset_by_token(self):
+        b = bridge()
+        class SDKTimeout(Exception):
+            error_code = 11
+        def timeout(timeout):
+            raise SDKTimeout("Timeout")
+        b.cam.capture_video_frame = timeout
+        owner = MemoryConnection()
+        request = {"view_mode": "focus", "focus_token": "position-1"}
+        self.assertTrue(b.live_frame(request, owner)["busy"])
+        self.assertTrue(b.live_frame(request, owner)["busy"])
+        self.assertFalse(b.live_frame(request, owner)["ok"])
+        self.assertIsNone(b.live_owner)
+
+    def test_carrier_read_never_initializes_camera(self):
+        from unittest.mock import patch
+        b = bridge()
+        b.cam = None
+        b.init_camera = lambda: self.fail("Carrier read tried to open camera")
+        with patch.object(bridge_module, "carrier_request", return_value={"available": True, "camera_enabled": False}):
+            reply = b.handle_request({"cmd": "carrier_read"}, MemoryConnection())
+        self.assertTrue(reply["ok"])
+        self.assertFalse(reply["carrier"]["camera_enabled"])
+        self.assertFalse(reply["diagnostics"]["live_active"])
+
     def test_live_to_still_and_back(self):
         camera = bridge()
         live = MemoryConnection()

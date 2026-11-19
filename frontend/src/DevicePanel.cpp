@@ -50,16 +50,25 @@ DevicePanel::DevicePanel(QWidget* parent)
   : QWidget(parent),
     ui(new Ui::DevicePanel),
     mLens(new LensClient(this)),
-    mCam(new CameraClient(this))
+    mCam(new CameraClient(this)),
+    mCarrier(new CameraClient(this))
 {
   ui->setupUi(this);
+  mCam->setObjectName("cameraClient");
+  mCarrier->setObjectName("carrierClient");
+  mCarrier->setCarrierOnly(true);
+  mFocusPoll.setInterval(250);
+  connect(&mFocusPoll,&QTimer::timeout,this,[this] {
+    if (mLens->isConnected()) mLens->sendLine("ST");
+  });
+
   auto carrierBox = new QGroupBox("Camera power and housing", this);
   auto carrierLayout = new QVBoxLayout(carrierBox);
-  mCarrierReadings = new QLabel("Connect camera bridge for power and housing readings", carrierBox);
+  mCarrierReadings = new QLabel("Connect host for power and housing readings (camera may be off)", carrierBox);
   mCarrierReadings->setObjectName("carrierReadings");
   mCarrierReadings->setTextFormat(Qt::PlainText);
   mCarrierReadings->setWordWrap(true);
-  mCarrierReason = new QLabel("Connect the camera bridge to detect carrier support", carrierBox);
+  mCarrierReason = new QLabel("Connect host to detect carrier support; no ASI camera connection needed", carrierBox);
   mCarrierReason->setObjectName("carrierAvailability");
   mCarrierReason->setWordWrap(true);
   mCarrierReason->setTextFormat(Qt::PlainText);
@@ -75,21 +84,53 @@ DevicePanel::DevicePanel(QWidget* parent)
   mCarrierRefresh = new QPushButton("Refresh readings", carrierBox);
   mCarrierRefresh->setObjectName("carrierRefresh");
   powerButtons->addWidget(mCarrierRefresh);
-  connect(mCarrierRefresh, &QPushButton::clicked, mCam, &CameraClient::requestStatus);
+  connect(mCarrierRefresh, &QPushButton::clicked, mCarrier, &CameraClient::requestStatus);
+  auto hostButtons = new QHBoxLayout;
+  auto hostConnect = new QPushButton("Connect host", carrierBox);
+  auto hostDisconnect = new QPushButton("Disconnect host", carrierBox);
+  hostConnect->setObjectName("carrierConnect"); hostDisconnect->setObjectName("carrierDisconnect");
+  hostButtons->addWidget(hostConnect); hostButtons->addWidget(hostDisconnect);
+  carrierLayout->addLayout(hostButtons);
+  connect(hostConnect, &QPushButton::clicked, this, [this] {
+    if (!mCarrier->connectToEndpoint(cameraEndpoint()))
+      emit statusMessage(mSlotIndex1, "Carrier host connection failed: " + cameraEndpoint());
+  });
+  connect(hostDisconnect, &QPushButton::clicked, mCarrier, &CameraClient::disconnect);
+  connect(mCarrier, &CameraClient::connectedChanged, this, [this, hostConnect, hostDisconnect](bool on) {
+    hostConnect->setEnabled(!on); hostDisconnect->setEnabled(on);
+    if (!on) {
+      mCarrierAvailable = false; mCarrierReceivedAt = 0; mCarrierStale = false;
+      mCarrierReadings->setText("Host disconnected — carrier readings cleared");
+    }
+    updateCarrierControls();
+  });
+  hostDisconnect->setEnabled(false);
+  connect(mCarrier, &CameraClient::busyChanged, this, [this](bool) { updateCarrierControls(); });
+  connect(mCarrier, &CameraClient::statusMessage, this, [this](const QString& msg) {
+    emit statusMessage(mSlotIndex1, "Carrier: " + msg);
+    if (!mCarrier->isBusy() && mCam->isConnected()) mCam->requestStatus();
+  });
+  connect(ui->edit_host, &QLineEdit::textEdited, mCarrier, &CameraClient::disconnect);
+  connect(ui->spin_cameraPort, qOverload<int>(&QSpinBox::valueChanged), mCarrier, &CameraClient::disconnect);
   carrierLayout->addLayout(powerButtons);
   ui->verticalLayout->insertWidget(2, carrierBox);
-  connect(mCameraPowerOn, &QPushButton::clicked, this, [this] { mCam->setCameraPower(true); });
-  connect(mCameraPowerOff, &QPushButton::clicked, this, [this] { mCam->setCameraPower(false); });
-  connect(mCam, &CameraClient::carrierReceived, this, &DevicePanel::displayCarrier);
+  connect(mCameraPowerOn, &QPushButton::clicked, this, [this] { mCarrier->setCameraPower(true); });
+  connect(mCameraPowerOff, &QPushButton::clicked, this, [this] { mCarrier->setCameraPower(false); });
+  connect(mCarrier, &CameraClient::carrierReceived, this, &DevicePanel::displayCarrier);
   connect(mCam, &CameraClient::cameraReadyChanged, this, [this](bool ready) {
     emit cameraLedStateChanged(mSlotIndex1, cameraLedState());
-    ui->btn_capture->setEnabled(ready && !mCam->isBusy());
+    ui->btn_capture->setEnabled(ready && !mCam->isBusy() && !mAutofocusActive);
     ui->value_cameraState->setText(ready ? "Ready" : (cameraConnected() ? "Not ready" : "Disconnected"));
   });
   connect(mCam, &CameraClient::busyChanged, this, [this](bool) {
     updateCarrierControls();
-    ui->btn_capture->setEnabled(mCam->cameraReady() && !mCam->isBusy());
+    ui->btn_capture->setEnabled(mCam->cameraReady() && !mCam->isBusy() && !mAutofocusActive);
   });
+  connect(mCarrier, &CameraClient::diagnosticsReceived, this, [this](const QJsonObject& d) {
+    mCarrierLive = d.value("live_active").toBool(false); updateCarrierControls();
+  });
+  connect(ui->spin_exposureMs, qOverload<int>(&QSpinBox::valueChanged), this, [this] { emit cameraSettingsChanged(); });
+  connect(ui->spin_gain, qOverload<int>(&QSpinBox::valueChanged), this, [this] { emit cameraSettingsChanged(); });
   updateCarrierControls();
   auto diagnosticsBox = new QGroupBox("ASI camera diagnostics", this);
   auto diagnosticsLayout = new QVBoxLayout(diagnosticsBox);
@@ -98,7 +139,7 @@ DevicePanel::DevicePanel(QWidget* parent)
   auto staleTimer = new QTimer(this);
   staleTimer->start(5000);
   connect(staleTimer, &QTimer::timeout, this, [this] {
-    if (cameraConnected() && mCarrierReceivedAt &&
+    if (mCarrier->isConnected() && mCarrierReceivedAt &&
         QDateTime::currentMSecsSinceEpoch() - mCarrierReceivedAt > 15000) {
       mCarrierStale = true;
       updateCarrierControls();
@@ -127,7 +168,6 @@ DevicePanel::DevicePanel(QWidget* parent)
   connect(mCam, &CameraClient::diagnosticsReceived, this, [this](const QJsonObject& d) {
     mCameraDiagnostics = d;
     mCameraDiagnosticsReceived = QDateTime::currentMSecsSinceEpoch();
-    mCarrierLive = d.value("live_active").toBool(false);
     updateCarrierControls();
     auto number = [&d](const QString& key, const QString& unit) {
       return d.value(key).isDouble() ? QString::number(d.value(key).toDouble(), 'f', 1) + unit : QString("unavailable");
@@ -336,6 +376,7 @@ DevicePanel::CameraSettings DevicePanel::cameraSettings() const
 
 void DevicePanel::setCameraSettings(const CameraSettings& s)
 {
+  if (mAutofocusActive) return;
   ui->spin_exposureMs->setValue(s.exposureMs);
   ui->value_exposureFriendly->setText(
     exposureToFriendlyString(ui->spin_exposureMs->value()));
@@ -354,6 +395,7 @@ DevicePanel::LensSettings DevicePanel::lensSettings() const
 
 void DevicePanel::setLensSettings(const LensSettings& s)
 {
+  if (mAutofocusActive) return;
   ui->focusValueSlider->setValue(s.focusRaw);
   ui->apertureValueSlider->setValue(s.apertureRaw);
   onFocusSliderChanged(ui->focusValueSlider->value());
@@ -409,20 +451,20 @@ void DevicePanel::setLensUiConnected(bool en)
 void DevicePanel::updateCarrierControls()
 {
   QString reason;
-  if (!mCam || !mCam->isConnected()) reason = "Connect the camera bridge (camera port) to detect power support.";
+  if (!mCarrier || !mCarrier->isConnected()) reason = "Connect host on this page; the ASI camera can remain disconnected or off.";
   else if (mBridgePlatform == "beagley_ai") reason = "BeagleY host: CM5 carrier switching and rail monitoring are not fitted.";
   else if (!mCarrierAvailable) reason = "Carrier controls unavailable: " + mCarrierError;
-  else if (mCam->isBusy()) reason = "Camera busy — power changes are disabled until the operation finishes.";
+  else if ((mCam->isBusy() || mCarrier->isBusy() || mAutofocusActive)) reason = "Camera busy — power changes are disabled until the operation finishes.";
   else if (mCarrierLive) reason = "Stop live view to enable camera power changes. Readbacks remain available.";
   else if (mCarrierStale) reason = "Carrier readbacks are stale — refresh readings before changing power.";
   else reason = "Carrier detected: camera 12 V can be switched. The CM5 5 V rail is monitoring only.";
-  const bool allowed = mCam && mCam->isConnected() && mCarrierAvailable && !mCarrierStale && !mCam->isBusy() && !mCarrierLive;
+  const bool allowed = mCarrier && mCarrier->isConnected() && mCarrierAvailable && !mCarrierStale && !(mCam->isBusy() || mCarrier->isBusy() || mAutofocusActive) && !mCarrierLive;
   mCameraPowerOn->setEnabled(allowed);
   mCameraPowerOff->setEnabled(allowed);
   mCameraPowerOn->setToolTip(reason);
   mCameraPowerOff->setToolTip(reason);
-  mCarrierReason->setText(reason);
-  mCarrierRefresh->setEnabled(mCam && mCam->isConnected() && !mCam->isBusy());
+  mCarrierReason->setText((mCarrier->isConnected() ? mCarrier->endpoint()+"\n" : QString())+reason);
+  mCarrierRefresh->setEnabled(mCarrier && mCarrier->isConnected() && !mCarrier->isBusy());
 }
 
 void DevicePanel::displayCarrier(const QJsonObject& carrier)
@@ -560,6 +602,32 @@ void DevicePanel::onLensPowerClicked()
   }
 }
 
+bool DevicePanel::focusReady() const {
+  return mLens->isConnected() && mLensBackendState == "RegularMessaging" &&
+    mLensPos>=8232 && mLensPos<=12777 &&
+    mFocusReceivedAt && QDateTime::currentMSecsSinceEpoch()-mFocusReceivedAt < 10000;
+}
+bool DevicePanel::requestFocus(int position) {
+  if (!focusReady() || position < ui->focusValueSlider->minimum() || position > ui->focusValueSlider->maximum()) return false;
+  mLens->sendLine(QString("SF %1").arg(position));
+  mLens->sendLine("ST");
+  return true;
+}
+void DevicePanel::setAutofocusActive(bool active) {
+  mAutofocusActive = active;
+  if (active) mFocusPoll.start(); else mFocusPoll.stop();
+  ui->group_lens->setEnabled(!active);
+  ui->group_connection->setEnabled(!active);
+  findChild<QPushButton*>("connectBoth")->setEnabled(!active);
+  findChild<QPushButton*>("disconnectBoth")->setEnabled(!active);
+  ui->btn_lensPower->setEnabled(!active && lensConnected());
+  ui->btn_lensDisconnect->setEnabled(!active && lensConnected());
+  ui->spin_exposureMs->setEnabled(!active);
+  ui->spin_gain->setEnabled(!active);
+  ui->btn_capture->setEnabled(!active && mCam->cameraReady() && !mCam->isBusy());
+  updateCarrierControls();
+}
+
 void DevicePanel::onFocusSetClicked()
 {
   if (!mLens->isConnected())
@@ -687,10 +755,11 @@ QString DevicePanel::makeCapturePrefix() const
   return QString("slot%1_%2").arg(mSlotIndex1).arg(ts);
 }
 
-bool DevicePanel::cameraBusy() const { return mCam && mCam->isBusy(); }
+bool DevicePanel::cameraBusy() const { return mAutofocusActive || (mCam && mCam->isBusy()); }
 
 void DevicePanel::capture()
 {
+  if (mAutofocusActive) { emit statusMessage(mSlotIndex1, "Stop autofocus before capture"); return; }
   if (!mCam || !mCam->isConnected())
   {
     emit statusMessage(mSlotIndex1, "Camera: not connected");
@@ -750,6 +819,7 @@ void DevicePanel::onLensConnectedChanged(bool connected, const QString& label)
 
   if (!connected)
   {
+    mFocusReceivedAt = 0;
     mHaveTelemetry = false;
     mLastKv.clear();
     mTelemetrySnapshot = QJsonObject(); mTelemetryTimestamp.clear();
@@ -815,7 +885,9 @@ void DevicePanel::onLensTelemetryUpdated(const QMap<QString, QString>& kv)
   }
 
   if (okF) {
+    mFocusReceivedAt = QDateTime::currentMSecsSinceEpoch();
     mLensPos = static_cast<uint16_t>(fVal);
+    emit focusPositionReceived(fVal);
 
     // Only sync the requested focus control if the actual lens value changed
     if (fVal != oldF) {
@@ -849,16 +921,9 @@ void DevicePanel::onLensStatusMessage(const QString& msg)
 // -------- CameraClient signals --------
 void DevicePanel::onCameraConnectedChanged(bool connected)
 {
-  mConnectedCameraEndpoint = connected ? cameraEndpoint() : QString();
+  mConnectedCameraEndpoint = connected ? mCam->endpoint() : QString();
   if (!connected) {
     mCameraDiagnostics = {};
-    mCarrierAvailable = false;
-    mCarrierLive = false;
-    mCarrierStale = false;
-    mBridgePlatform.clear();
-    mCarrierError.clear();
-    mCarrierReceivedAt = 0;
-    mCarrierReadings->setText("Disconnected — carrier readings cleared");
     mCameraTemperature->setText("Camera disconnected — previous readings cleared");
     mCameraDetails->clear();
   } else {

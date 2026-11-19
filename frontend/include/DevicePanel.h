@@ -56,6 +56,11 @@ public:
 
   // Convenience status for MainWindow
   bool lensConnected() const;
+  bool focusReady() const;
+  int actualFocus() const { return mLensPos; }
+  bool requestFocus(int position);
+  void setAutofocusActive(bool active);
+
   bool cameraConnected() const;
   bool cameraBusy() const;
   QString connectedCameraEndpoint() const { return mConnectedCameraEndpoint; }
@@ -69,6 +74,8 @@ public slots:
   void requestCameraStatus();
 
 signals:
+  void cameraSettingsChanged();
+  void focusPositionReceived(int position);
   void cameraDiagnostics(int slot1, const QString& endpoint, const QJsonObject& diagnostics);
   void cameraCaptureBusy(int slot1, bool busy);
   void environmentReading(int slot1, const QString& endpoint, const QMap<QString, QString>& values);
@@ -138,6 +145,9 @@ private:
 
   LensClient*   mLens = nullptr;
   CameraClient* mCam  = nullptr;
+  CameraClient* mCarrier = nullptr;
+  bool mAutofocusActive = false;
+  QTimer mFocusPoll;
 
   // telemetry throttling
   QTimer* mTelemetryTimer = nullptr;
@@ -152,7 +162,7 @@ private:
   QString mLensBackendState;
   QString mConnectedLensEndpoint, mConnectedCameraEndpoint;
   QJsonObject mTelemetrySnapshot, mCameraDiagnostics;
-  qint64 mCameraDiagnosticsReceived = 0;
+  qint64 mCameraDiagnosticsReceived = 0, mFocusReceivedAt = 0;
   QTabWidget* mControlTabs = nullptr;
   QLabel* mCarrierReason = nullptr;
   QPushButton* mCarrierRefresh = nullptr;

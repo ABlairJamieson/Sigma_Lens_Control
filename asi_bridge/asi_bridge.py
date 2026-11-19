@@ -126,6 +126,9 @@ class ASIBridge:
         self.live_config = None
         self.live_timeouts = 0
         self.live_warming = True
+        self.live_focus_token = None
+        self.live_discard_remaining = 0
+        self.live_controls = None
         self.video_running = False
         self.state = dict(DEFAULTS)
 
@@ -216,6 +219,7 @@ class ASIBridge:
         )
 
     def apply_settings(self, exposure_us=None, gain=None):
+        self.live_controls = None
         if self.cam is None:
             log("apply_settings(): cam is None, calling init_camera()")
             self.init_camera()
@@ -242,6 +246,7 @@ class ASIBridge:
             self.cam.stop_video_capture()
             self.video_running = False
             self.live_config = None
+            self.live_controls = None
 
     def prepare_still(self):
         self.stop_video()
@@ -284,30 +289,57 @@ class ASIBridge:
             return _err("Live size must be 160..3840 x 120..2160; JPEG quality 30..95")
         if not 1 <= exposure <= 2000000:
             return _err("Live exposure must be 1..2000000 microseconds")
-        config = (max_width, max_height, exposure, gain)
-        if not self.video_running or self.live_config != config:
+        mode = req.get("view_mode", "full")
+        if mode not in ("full", "focus"):
+            return _err("view_mode must be full or focus")
+        focus_token = req.get("focus_token", "")
+        if not isinstance(focus_token, str) or len(focus_token) > 80:
+            return _err("Invalid focus_token")
+        config = (max_width, max_height, mode) if mode == "full" else (mode,)
+        fresh_focus = bool(focus_token) and focus_token != self.live_focus_token
+        if not self.video_running or self.live_config != config or fresh_focus:
             self.stop_video()
             width, height = int(self.info["MaxWidth"]), int(self.info["MaxHeight"])
             ratio = max(width / max_width, height / max_height)
             supported = [int(b) for b in self.info.get("SupportedBins", [1]) if int(b) > 0]
-            bins = max([b for b in supported if b <= ratio] or [1])
-            self.cam.set_roi_format(width=width // bins // 8 * 8,
-                                    height=height // bins // 2 * 2,
+            bins = max([b for b in supported if b <= ratio] or [1]) if mode == "full" else 1
+            roi_w = (width // bins if mode == "full" else min(width, 1024)) // 8 * 8
+            roi_h = (height // bins if mode == "full" else min(height, 768)) // 2 * 2
+            self.cam.set_roi_format(width=roi_w, height=roi_h,
                                     bins=bins, image_type=asi.ASI_IMG_RAW8)
-            self.cam.set_roi_start_position(0, 0)
+            self.cam.set_roi_start_position(0 if mode == "full" else (width-roi_w)//2//8*8,
+                                           0 if mode == "full" else (height-roi_h)//2)
             self.cam.set_control_value(asi.ASI_EXPOSURE, exposure)
             self.cam.set_control_value(asi.ASI_GAIN, gain)
+            self.live_controls = (exposure, gain)
+            self.live_actual_controls = (int(self.cam.get_control_value(asi.ASI_EXPOSURE)[0]),
+                                         int(self.cam.get_control_value(asi.ASI_GAIN)[0]))
             self.cam.start_video_capture()
             self.video_running = True
             self.live_config = config
             self.live_timeouts = 0
             self.live_warming = True
+            self.live_focus_token = focus_token
+            self.live_discard_remaining = 2 if fresh_focus else 0
+        # Exposure/gain can change while video runs; do not restart sensor readout.
+        if self.live_controls != (exposure, gain):
+            self.cam.set_control_value(asi.ASI_EXPOSURE, exposure)
+            self.cam.set_control_value(asi.ASI_GAIN, gain)
+            self.live_controls = (exposure, gain)
+            self.live_actual_controls = (int(self.cam.get_control_value(asi.ASI_EXPOSURE)[0]),
+                                         int(self.cam.get_control_value(asi.ASI_GAIN)[0]))
         self.live_owner = conn
         # First frames can require sensor startup plus a full sensor readout,
         # even when the delivered JPEG is small. Keep retries bounded.
         timeout_ms = 2 * exposure // 1000 + (8000 if self.live_warming else 3000)
+        acquisition_started = time.monotonic()
         try:
+            # Persist progress across SDK timeouts; retries must not reset their budget.
+            while self.live_discard_remaining:
+                self.cam.capture_video_frame(timeout=timeout_ms)
+                self.live_discard_remaining -= 1
             frame = self.cam.capture_video_frame(timeout=timeout_ms)
+            self.live_focus_token = focus_token
         except Exception as e:
             if getattr(e, "error_code", None) != 11:
                 raise
@@ -320,6 +352,19 @@ class ASIBridge:
                        consecutive_timeouts=self.live_timeouts)
         self.live_timeouts = 0
         self.live_warming = False
+        processing_started = time.monotonic()
+        acquisition_ms = (processing_started-acquisition_started)*1000
+        sensor_h, sensor_w = frame.shape[:2]
+        # Bound metric work in full view too; AF always uses this unbinned centre.
+        mw, mh = min(sensor_w, 1024), min(sensor_h, 768)
+        x, y = (sensor_w-mw)//2, (sensor_h-mh)//2
+        patch = frame[y+mh//10:y+mh-mh//10, x+mw//10:x+mw-mw//10]
+        mean_level = float(patch.mean())
+        saturated_fraction = float((patch >= 250).mean())
+        patch = cv2.GaussianBlur(patch, (3, 3), 0).astype("float32")
+        gx = cv2.Sobel(patch, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(patch, cv2.CV_32F, 0, 1, ksize=3)
+        focus_score = float((gx*gx + gy*gy).mean())
         height, width = frame.shape[:2]
         scale = min(max_width / width, max_height / height, 1.0)
         if scale < 1:
@@ -332,7 +377,12 @@ class ASIBridge:
         header = _ok(cmd="live_frame", pixfmt="jpeg", nbytes=len(payload),
                      w=int(frame.shape[1]), h=int(frame.shape[0]),
                      timestamp=datetime.now().astimezone().isoformat(),
-                     exposure_us=exposure, gain=gain)
+                     exposure_us=self.live_actual_controls[0], gain=self.live_actual_controls[1],
+                     view_mode=mode, focus_token=focus_token, focus_score=focus_score,
+                     mean_level=mean_level, saturated_fraction=saturated_fraction,
+                     sensor_w=sensor_w, sensor_h=sensor_h,
+                     acquisition_ms=acquisition_ms,
+                     processing_ms=(time.monotonic()-processing_started)*1000)
         conn.sendall((json.dumps(header) + "\n").encode("utf-8"))
         conn.sendall(payload)
         return None
@@ -585,7 +635,8 @@ class ASIBridge:
 
         if cmd == "carrier_read":
             carrier = carrier_request()
-            return _ok(cmd="carrier_read", carrier=carrier, capabilities=bridge_capabilities(carrier))
+            return _ok(cmd="carrier_read", carrier=carrier, capabilities=bridge_capabilities(carrier),
+                       diagnostics={"live_active": self.video_running})
 
         if cmd == "camera_power":
             return self.camera_power(req)

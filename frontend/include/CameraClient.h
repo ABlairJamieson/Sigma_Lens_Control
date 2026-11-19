@@ -17,8 +17,10 @@ public:
   void disconnect();
 
   bool isConnected() const;
+  QString endpoint() const { return mEndpoint; }
 
   void requestStatus();
+  void setCarrierOnly(bool enabled) { mCarrierOnly = enabled; }
   void setCameraPower(bool enabled);
   bool cameraReady() const { return mCameraReady; }
   bool isBusy() const { return mBusy || mPowerPending; }
@@ -72,11 +74,12 @@ private:
 
   QByteArray mRxBuf;
 
+  QString mEndpoint;
   bool mBusy = false;
   bool mPowerPending = false, mCameraReady = false;
   QTimer mPowerDeadline;
   QTimer mCaptureDeadline, mDiagnosticsTimer;
-  bool mStatusPending = false;
+  bool mStatusPending = false, mCarrierOnly = false;
   QJsonObject mContext, mPendingContext, mCaptureHeader;
   void finishCapture();
   QTcpSocket* mSock = nullptr;

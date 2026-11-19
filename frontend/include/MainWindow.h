@@ -17,10 +17,13 @@ QT_END_NAMESPACE
 
 class EnvironmentHistory;
 class LiveViewClient;
+class AutofocusController;
+class QSpinBox;
 class QCheckBox;
 class QPushButton;
 class QLabel;
 class QDialog;
+class QCloseEvent;
 
 class MainWindow : public QMainWindow
 {
@@ -56,6 +59,19 @@ private:
   QVector<QString> mCapturePaths = QVector<QString>(8);
   int mPreviewSlot = 1;
   int mPreviewClickGeneration = 0;
+  AutofocusController* mAutofocus = nullptr;
+  QCheckBox *mFollowCapture = nullptr, *mFocusView = nullptr;
+  QSpinBox *mLiveExposure = nullptr, *mLiveGain = nullptr, *mFocusRadius = nullptr;
+  QPushButton *mAutofocusButton = nullptr, *mCancelFocus = nullptr;
+  QLabel* mLiveStatus = nullptr;
+  bool mBeforeFocusView = false, mFocusPreparing = false;
+  QTimer mFocusPrepareDeadline;
+  QString mFocusPrepareToken, mFocusResult;
+  void finishAutofocus(const QString& message);
+  int mFocusSlot = 0;
+  bool mCloseAfterFocus = false;
+  void updateLiveSettings();
+  void beginAutofocus();
   void startLive();
   void renderPreview();
   void openFullscreen();
@@ -87,6 +103,7 @@ private:
 
   protected:
   bool eventFilter(QObject* obj, QEvent* event) override;
+  void closeEvent(QCloseEvent* event) override;
 };
 
 #endif

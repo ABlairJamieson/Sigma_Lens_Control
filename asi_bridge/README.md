@@ -361,3 +361,24 @@ For CM5 buffer/permission setup and offline verification, use
 `cm5_setup/camera_setup.py --apply` and `--check` as documented in
 `cm5_setup/readme.txt`. Never install the temporary USB controller experiments
 as part of normal provisioning.
+
+## Adjustable live view and focus frames
+
+Live exposure/gain changes no longer restart video; unchanged controls are cached.
+`live_frame` accepts `view_mode: "full"` (default, binned full field) or `"focus"`
+(centred unbinned ROI up to 1024×768, aligned to sensor requirements). Optional
+`focus_token` is a string up to 80 characters: a new nonempty token restarts the
+video stream and discards two startup frames. Retry budgets persist across SDK
+timeouts. Use a unique token after each acknowledged/settled lens move.
+
+Additional response fields: `view_mode`, `focus_token`, `focus_score` (Tenengrad
+energy from the central 80% of an at-most 1024×768 patch before resize/JPEG), `mean_level`,
+`saturated_fraction`, sensor ROI dimensions `sensor_w`, `sensor_h`, and
+`acquisition_ms`/`processing_ms` for SDK read and image-processing times.
+Exposure/gain report SDK-confirmed control values; an already queued sensor frame
+may still reflect preceding settings. Frames are grayscale RAW8-to-JPEG as before.
+
+`carrier_read` also returns `diagnostics.live_active` without touching the camera
+SDK, allowing host-only power/readbacks while ASI is disconnected or capturing.
+The GUI uses a separate connection on the same port; no new port is opened.
+See [frontend operation and testing](../frontend/LIVE_VIEW.md).
