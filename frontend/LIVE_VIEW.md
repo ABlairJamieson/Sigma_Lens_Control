@@ -199,3 +199,28 @@ while autofocus is active.
 **Use capture exposure/gain** is checked on startup. Duplicate live exposure/gain
 inputs are hidden while linked and appear only when that option is unchecked.
 The existing 2-second live-exposure cap still applies; still exposure is unchanged.
+
+
+## Timeout recovery and measured limitations
+
+The host allows six seconds plus twice the exposure for a steady full-field video
+read (eight seconds during startup); focus crops retain a three-second allowance.
+The full-field setting accounts for a measured 3.87-second SDK read that exceeded
+the former three-second deadline. Discarded startup frames share one request
+budget so they cannot each consume a separate long wait.
+
+After three consecutive SDK timeouts, the bridge stops/restarts the preview stream
+once without changing camera power. It retains ownership during recovery and
+continues reporting live-active so power cannot be switched in the restart gap.
+Focus samples discard two startup frames again. A good frame resets the recovery
+budget; three more timeouts without a good frame stop preview with an explicit
+error. The frontend keeps Live view checked while retrying and shows the recovery
+state; persistent or other hard errors still turn it off.
+
+pch5 hardware tests on 2026-11-20 confirmed that 1024 MB USB buffering and hardware
+binning did not eliminate long full-field stalls. Hardware binning produced fast
+bursts (roughly 53–127 ms SDK reads), but a longer run still stalled, so it is not
+enabled by default. A 4096×3072 sensor crop was faster in the short benchmark but
+reduces field of view. JPEG resizing and display zoom do not reduce sensor-readout
+work. These changes improve recovery; they do not establish a fix for the remaining
+host/SDK/USB transport stalls. Comparison results are saved with this chat's outputs.

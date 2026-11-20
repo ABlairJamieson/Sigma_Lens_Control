@@ -240,6 +240,9 @@ MainWindow::MainWindow(QWidget *parent)
   connect(mLive, &LiveViewClient::frameReady, this, [this](const QImage& image) {
     mPreviewFrames[mPreviewSlot-1] = image; renderPreview();
   });
+  connect(mLive, &LiveViewClient::recovering, this, [this](const QString& message) {
+    mLiveStatus->setText(message); onPanelStatusMessage(mPreviewSlot,message);
+  });
   connect(mLive, &LiveViewClient::failed, this, [this](const QString& message) {
     if (mAutofocus->active()) mAutofocus->cancel(message);
     else if (mFocusPreparing) finishAutofocus(message);

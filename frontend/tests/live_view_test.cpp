@@ -97,6 +97,23 @@ private slots:
     QCOMPARE(server.frames[1]["focus_y"].toDouble(),.25);
     live.stop();
   }
+  void liveTimeoutRecoveryStaysActiveAndPersistentFailureStops() {
+    PreviewServer server; LiveViewClient live;
+    QSignalSpy failed(&live,&LiveViewClient::failed), images(&live,&LiveViewClient::frameReady), recovery(&live,&LiveViewClient::recovering);
+    live.start(server.endpoint(),10000,0);
+    QTRY_COMPARE(server.frames.size(),1);
+    server.liveSocket->write("{\"ok\":true,\"cmd\":\"live_frame\",\"busy\":true,\"retry_reason\":\"camera_timeout\",\"consecutive_timeouts\":1}\n");
+    QTRY_COMPARE_WITH_TIMEOUT(server.frames.size(),2,1000);
+    QCOMPARE(failed.count(),0); QCOMPARE(recovery.count(),1);
+    server.liveSocket->write("{\"ok\":true,\"cmd\":\"live_frame\",\"busy\":true,\"retry_reason\":\"stream_restart\"}\n");
+    QTRY_COMPARE_WITH_TIMEOUT(server.frames.size(),3,1000);
+    QCOMPARE(failed.count(),0); QCOMPARE(recovery.count(),2);
+    server.reply(); QTRY_COMPARE(images.count(),1);
+    QTRY_COMPARE(server.frames.size(),4);
+    server.liveSocket->write("{\"ok\":false,\"cmd\":\"live_frame\",\"error\":\"Still timed out after stream restart\"}\n");
+    QTRY_COMPARE(failed.count(),1);
+    QTest::qWait(350); QCOMPARE(server.frames.size(),4);
+  }
   void compactControlsAndFollowCapture() {
     QTemporaryDir settings; QSettings::setPath(QSettings::NativeFormat,QSettings::UserScope,settings.path());
     MainWindow win; DevicePanel* panel=nullptr;

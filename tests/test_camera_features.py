@@ -11,6 +11,7 @@ import threading
 import time
 import types
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -170,10 +171,56 @@ class CameraFeatures(unittest.TestCase):
         b.cam.capture_video_frame = fail
         self.assertTrue(b.live_frame(request, owner)["busy"])
         self.assertTrue(b.live_frame(request, owner)["busy"])
+        restarted = b.live_frame(request, owner)
+        self.assertTrue(restarted["busy"])
+        self.assertEqual(restarted["retry_reason"],"stream_restart")
+        self.assertFalse(b.video_running)
+        self.assertIs(b.live_owner,owner)
+        self.assertTrue(b.handle_request({"cmd":"carrier_read"},owner)["diagnostics"]["live_active"])
+        self.assertTrue(b.live_frame(request, owner)["busy"])
+        self.assertTrue(b.live_frame(request, owner)["busy"])
         self.assertFalse(b.live_frame(request, owner)["ok"])
         self.assertFalse(b.video_running)
         self.assertIsNone(b.live_owner)
         self.assertEqual(b.cam.get_roi_format()[3], SDK.ASI_IMG_RAW16)
+
+    def test_live_stream_restart_recovers_and_focus_discards_stale_frames(self):
+        b = bridge(); owner=MemoryConnection(); original=b.cam.capture_video_frame
+        class SDKTimeout(Exception):
+            error_code=11
+        attempts=[]
+        def capture(timeout):
+            attempts.append(timeout)
+            if len(attempts)<=3: raise SDKTimeout("Timeout")
+            return original(timeout)
+        b.cam.capture_video_frame=capture
+        request={"view_mode":"focus","focus_token":"lens-position"}
+        for _ in range(2): self.assertTrue(b.live_frame(request,owner)["busy"])
+        self.assertEqual(b.live_frame(request,owner)["retry_reason"],"stream_restart")
+        self.assertIsNone(b.live_frame(request,owner))
+        self.assertEqual(len(attempts),6)  # restart discards two frames, then delivers one
+        self.assertEqual(b.live_restarts,0)
+        header=json.loads(bytes(owner.data).split(b"\n",1)[0])
+        self.assertEqual(header["focus_token"],"lens-position")
+        self.assertFalse(b.live_restart_pending)
+
+    def test_full_view_wait_budget_and_shared_focus_startup_deadline(self):
+        b=bridge(); owner=MemoryConnection(); waits=[]; original=b.cam.capture_video_frame
+        def capture(timeout):
+            waits.append(timeout); return original(timeout)
+        b.cam.capture_video_frame=capture
+        b.live_frame({"exposure_us":10000},owner)
+        b.live_frame({"exposure_us":10000},owner)
+        self.assertGreaterEqual(waits[-1],6000)
+        b.release_live(owner); waits.clear(); owner.data.clear()
+        # Two startup frames consume the request's budget; a third SDK call
+        # must not receive another independent 8-second allowance.
+        with patch.object(bridge_module.time,"monotonic",side_effect=[0,0,4,9]):
+            result=b.live_frame({"view_mode":"focus","focus_token":"new-position"},owner)
+        self.assertTrue(result["busy"])
+        self.assertEqual(len(waits),2)
+        self.assertLess(waits[1],waits[0])
+        self.assertEqual(b.live_discard_remaining,0)
 
     def test_late_camera_retries_without_client_and_serializes_sdk_access(self):
         b = bridge()
@@ -264,6 +311,9 @@ class CameraFeatures(unittest.TestCase):
         b.cam.capture_video_frame = timeout
         owner = MemoryConnection()
         request = {"view_mode": "focus", "focus_token": "position-1"}
+        self.assertTrue(b.live_frame(request, owner)["busy"])
+        self.assertTrue(b.live_frame(request, owner)["busy"])
+        self.assertEqual(b.live_frame(request, owner)["retry_reason"],"stream_restart")
         self.assertTrue(b.live_frame(request, owner)["busy"])
         self.assertTrue(b.live_frame(request, owner)["busy"])
         self.assertFalse(b.live_frame(request, owner)["ok"])

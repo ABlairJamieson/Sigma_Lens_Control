@@ -159,6 +159,8 @@ class ASIBridge:
         self.live_owner = None
         self.live_config = None
         self.live_timeouts = 0
+        self.live_restarts = 0
+        self.live_restart_pending = False
         self.live_warming = True
         self.live_focus_token = None
         self.live_discard_remaining = 0
@@ -298,6 +300,8 @@ class ASIBridge:
                 self.prepare_still()
             finally:
                 self.live_owner = None
+                self.live_restart_pending = False
+                self.live_restarts = 0
 
     def live_frame(self, req, conn):
         if self.cam is None:
@@ -343,6 +347,8 @@ class ASIBridge:
                   (mode, focus_left, focus_top))
         fresh_focus = bool(focus_token) and focus_token != self.live_focus_token
         if not self.video_running or self.live_config != config or fresh_focus:
+            if not self.live_restart_pending:
+                self.live_restarts = 0
             self.stop_video()
             width, height = int(self.info["MaxWidth"]), int(self.info["MaxHeight"])
             ratio = max(width / max_width, height / max_height)
@@ -365,6 +371,7 @@ class ASIBridge:
             self.cam.start_video_capture()
             self.video_running = True
             self.live_config = config
+            self.live_restart_pending = False
             self.live_timeouts = 0
             self.live_warming = True
             self.live_focus_token = focus_token
@@ -379,14 +386,25 @@ class ASIBridge:
         self.live_owner = conn
         # First frames can require sensor startup plus a full sensor readout,
         # even when the delivered JPEG is small. Keep retries bounded.
-        timeout_ms = 2 * exposure // 1000 + (8000 if self.live_warming else 3000)
+        # Measured full-field reads can take ~3.9 s even at short exposure;
+        # a 3 s deadline generated avoidable USB timeout/restart cycles.
+        steady_ms = 6000 if mode == "full" else 3000
+        timeout_ms = 2 * exposure // 1000 + (8000 if self.live_warming else steady_ms)
         acquisition_started = time.monotonic()
+        def read_frame():
+            # One overall request budget, including any discarded startup frames.
+            remaining = timeout_ms - int((time.monotonic()-acquisition_started)*1000)
+            if remaining <= 0:
+                exc = TimeoutError("Preview frame request budget exhausted")
+                exc.error_code = 11
+                raise exc
+            return self.cam.capture_video_frame(timeout=remaining)
         try:
             # Persist progress across SDK timeouts; retries must not reset their budget.
             while self.live_discard_remaining:
-                self.cam.capture_video_frame(timeout=timeout_ms)
+                read_frame()
                 self.live_discard_remaining -= 1
-            frame = self.cam.capture_video_frame(timeout=timeout_ms)
+            frame = read_frame()
             self.live_focus_token = focus_token
         except Exception as e:
             if getattr(e, "error_code", None) != 11:
@@ -394,11 +412,19 @@ class ASIBridge:
             self.live_timeouts += 1
             log(f"Live frame timeout {self.live_timeouts}/3 (budget {timeout_ms} ms)")
             if self.live_timeouts >= 3:
+                if self.live_restarts < 1:
+                    self.stop_video()
+                    self.live_restarts += 1
+                    self.live_restart_pending = True
+                    self.live_focus_token = None  # discard stale focus frames after restart
+                    log("Restarting stalled live stream once; camera power unchanged")
+                    return _ok(cmd="live_frame", busy=True, retry_reason="stream_restart", stream_restarts=1)
                 self.release_live(conn)
-                return _err("Live camera timed out three times; check USB connection and power")
+                return _err("Live camera still timed out after one stream restart; check USB connection and power", cmd="live_frame")
             return _ok(cmd="live_frame", busy=True, retry_reason="camera_timeout",
                        consecutive_timeouts=self.live_timeouts)
         self.live_timeouts = 0
+        self.live_restarts = 0
         self.live_warming = False
         processing_started = time.monotonic()
         acquisition_ms = (processing_started-acquisition_started)*1000
@@ -490,7 +516,7 @@ class ASIBridge:
                       usb3_host=bool(info["IsUSB3Host"]) if "IsUSB3Host" in info else None,
                       usb3_camera=bool(info["IsUSB3Camera"]) if "IsUSB3Camera" in info else None,
                       cooler_camera=bool(info["IsCoolerCam"]) if "IsCoolerCam" in info else None,
-                      live_active=self.video_running)
+                      live_active=(self.video_running or self.live_owner is not None))
         return result
 
     def status(self):
@@ -524,7 +550,7 @@ class ASIBridge:
             exposure_us=int(exp),
             gain=int(gain),
             state=dict(self.state),
-            live_active=self.video_running,
+            live_active=(self.video_running or self.live_owner is not None),
             protocol_version=1,
         )
         log(f"status(): returning connected=True exposure_us={int(exp)} gain={int(gain)}")
@@ -693,7 +719,7 @@ class ASIBridge:
         if cmd == "carrier_read":
             carrier = carrier_request()
             return _ok(cmd="carrier_read", carrier=carrier, capabilities=bridge_capabilities(carrier),
-                       diagnostics={"live_active": self.video_running})
+                       diagnostics={"live_active": self.video_running or self.live_owner is not None})
 
         if cmd == "camera_power":
             return self.camera_power(req)

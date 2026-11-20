@@ -22,6 +22,7 @@ signals:
   void frameReady(const QImage& image);
   void frameMetadata(const QJsonObject& metadata);
   void failed(const QString& message);
+  void recovering(const QString& message);
 private:
   void requestFrame();
   void receive();

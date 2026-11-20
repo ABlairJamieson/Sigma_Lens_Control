@@ -59,6 +59,11 @@ void LiveViewClient::receive() {
     const auto header = doc.object(); mHeader = header;
     if (!header.value("ok").toBool()) { fail("Live view: " + header.value("error").toString()); return; }
     if (header.value("cmd").toString() == "live_frame" && header.value("busy").toBool()) {
+      const auto reason=header.value("retry_reason").toString();
+      if (reason=="camera_timeout")
+        emit recovering(QString("Live view: camera frame delayed (%1/3); retrying").arg(header.value("consecutive_timeouts").toInt()));
+      else if (reason=="stream_restart")
+        emit recovering("Live view: restarting stalled preview stream once; camera power unchanged");
       mWaiting = false; mDeadline.stop(); mNext.start(250); return;
     }
     mBytes = qint64(header.value("nbytes").toDouble());
