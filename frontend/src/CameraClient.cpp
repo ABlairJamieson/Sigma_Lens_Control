@@ -431,6 +431,6 @@ void CameraClient::onReadyRead()
     }
 
     // Periodic status updates go to the diagnostics panel without flooding the log.
-    if (cmd != "status" && !obj.contains("connected")) emit statusMessage("Camera OK response");
+    if (cmd != "status" && cmd != "carrier_read" && !obj.contains("connected")) emit statusMessage("Camera OK response");
   }
 }
