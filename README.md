@@ -343,7 +343,7 @@ displays live or frozen imagery fitted to the screen;
 press **Esc** to return. Fullscreen requests a screen-sized stream, capped at 4K.
 Live view follows changes to the slot's exposure/gain while running, or can use
 separate live settings (preview exposure is capped at 2 seconds). Still captures
-retain the requested full exposure and RAW16 resolution. Focus detail provides a
+retain the requested full exposure and RAW16 resolution. Autofocus detail uses a
 small unbinned crop at the selected focus ROI; the new Autofocus button performs a bounded
 contrast search using fresh frames and actual lens-position feedback.
 See [live view, autofocus and hardware-test notes](frontend/LIVE_VIEW.md).

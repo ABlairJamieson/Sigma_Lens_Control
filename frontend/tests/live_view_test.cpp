@@ -13,6 +13,8 @@
 #include <QTemporaryDir>
 #include <QSettings>
 #include <QTabWidget>
+#include <QWheelEvent>
+#include <QMouseEvent>
 #include <functional>
 #include "LiveViewClient.h"
 #include "MainWindow.h"
@@ -102,13 +104,17 @@ private slots:
     QVERIFY(panel);
     auto exposure=win.findChild<QSpinBox*>("liveExposure"); auto gain=win.findChild<QSpinBox*>("liveGain");
     auto follow=win.findChild<QCheckBox*>("liveFollowCapture"); QVERIFY(exposure && gain && follow);
+    QVERIFY(follow->isChecked()); QVERIFY(exposure->isHidden()); QVERIFY(gain->isHidden());
+    QCOMPARE(exposure->value(),qRound(panel->cameraSettings().exposureMs));
     auto capture=panel->cameraSettings(); capture.exposureMs=123; capture.gain=77; panel->setCameraSettings(capture);
     QCOMPARE(exposure->value(),123); QCOMPARE(gain->value(),77); QVERIFY(!exposure->isEnabled());
+    QVERIFY(follow->isChecked()); QVERIFY(exposure->isHidden()); QVERIFY(gain->isHidden());
     capture.exposureMs=4000; panel->setCameraSettings(capture); QCOMPARE(exposure->value(),2000);
     QCOMPARE(panel->cameraSettings().exposureMs,4000.0);
     follow->setChecked(false); exposure->setValue(25); gain->setValue(44);
     capture.exposureMs=200; capture.gain=12; panel->setCameraSettings(capture);
     QCOMPARE(exposure->value(),25); QCOMPARE(gain->value(),44);
+    QVERIFY(!exposure->isHidden()); QVERIFY(!gain->isHidden());
     win.resize(1024,700); win.show(); QTest::qWait(50);
     QVERIFY2(win.width()<=1024,"Live controls force a wide main window");
     QVERIFY2(win.height()<=760,"Live controls force a tall main window");
@@ -192,6 +198,77 @@ private slots:
       QTest::mouseClick(preview,Qt::LeftButton,Qt::NoModifier,point(.75,.25)); QTest::qWait(60);
       QVERIFY(win.grab().save(qEnvironmentVariable("ROI_SCREENSHOT")));
     }
+    win.findChild<QCheckBox*>("check_liveView")->setChecked(false);
+  }
+  void wheelZoomAndPanKeepFocusRoiIndependent() {
+    PreviewServer server; server.automatic=true; server.focusCapable=true;
+    MainWindow win; win.resize(1200,850); win.show();
+    auto panel=win.findChild<DevicePanel*>("devicePanel1"); QVERIFY(panel);
+    panel->findChild<QLineEdit*>("edit_host")->setText("127.0.0.1");
+    panel->findChild<QSpinBox*>("spin_cameraPort")->setValue(server.serverPort());
+    QVERIFY(QMetaObject::invokeMethod(panel,"onCameraConnectClicked"));
+    win.findChild<QCheckBox*>("check_liveView")->setChecked(true);
+    QTRY_VERIFY(server.frames.size()>2);
+    auto preview=win.findChild<QLabel*>("label_mainPreview");
+    auto zoom=win.findChild<QLabel*>("previewZoom");
+    auto fit=win.findChild<QPushButton*>("previewFit"); QVERIFY(zoom && fit);
+    auto imageRect=[&](QLabel* label) {
+      const auto content=label->contentsRect();
+      const auto shown=QSize(320,240).scaled(content.size(),Qt::KeepAspectRatio);
+      return QRect(QPoint(content.x()+(content.width()-shown.width())/2,content.y()+(content.height()-shown.height())/2),shown);
+    };
+    auto wheel=[&](QLabel* label,const QPoint& point,int delta) {
+      QWheelEvent event(QPointF(point),QPointF(label->mapToGlobal(point)),QPoint(),QPoint(0,delta),Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+      QApplication::sendEvent(label,&event);
+    };
+    auto yellowWidth=[&] {
+      const auto image=preview->pixmap(Qt::ReturnByValue).toImage();
+      int low=image.width(),high=-1;
+      for(int y=0;y<image.height();++y) for(int x=0;x<image.width();++x) {
+        const auto color=image.pixelColor(x,y);
+        if(color.red()>200 && color.green()>150 && color.blue()<80) {low=std::min(low,x);high=std::max(high,x);}
+      }
+      return high-low+1;
+    };
+    const int originalBox=yellowWidth(); QVERIFY(originalBox>10);
+    wheel(preview,imageRect(preview).center(),480);
+    QCOMPARE(zoom->text(),QString("2.4×"));
+    QVERIFY(yellowWidth()>originalBox*2); // same sensor ROI grows on screen
+    QTest::qWait(70);
+    QCOMPARE(server.frames.last()["focus_x"].toDouble(),.5);
+    QCOMPARE(server.frames.last()["focus_y"].toDouble(),.5);
+    QCOMPARE(server.frames.last()["view_mode"].toString(),QString("full"));
+    fit->click(); QCOMPARE(zoom->text(),QString("1.0×"));
+    auto shown=imageRect(preview);
+    const QPoint anchor(shown.x()+qRound(shown.width()*.75),shown.y()+qRound(shown.height()*.25));
+    wheel(preview,anchor,480);
+    QTest::mouseClick(preview,Qt::LeftButton,Qt::NoModifier,anchor);
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_x"].toDouble()-.75)<.005);
+    QTRY_VERIFY(std::abs(server.frames.last()["focus_y"].toDouble()-.25)<.005);
+    const auto selected=server.frames.last();
+    QTest::mousePress(preview,Qt::MiddleButton,Qt::NoModifier,shown.center());
+    const QPoint dragged=shown.center()+QPoint(40,0);
+    QMouseEvent drag(QEvent::MouseMove,QPointF(dragged),Qt::NoButton,Qt::MiddleButton,Qt::NoModifier);
+    QApplication::sendEvent(preview,&drag);
+    QTest::mouseRelease(preview,Qt::MiddleButton,Qt::NoModifier,dragged);
+    QTest::qWait(70);
+    QCOMPARE(server.frames.last()["focus_x"],selected["focus_x"]);
+    QCOMPARE(server.frames.last()["focus_y"],selected["focus_y"]);
+    auto tabs=win.findChild<QTabWidget*>("tabWidget_devices");
+    tabs->setCurrentIndex(1); QCOMPARE(zoom->text(),QString("1.0×"));
+    tabs->setCurrentIndex(0); QCOMPARE(zoom->text(),QString("2.4×"));
+    win.findChild<QPushButton*>("btn_fullscreen")->click();
+    auto enlarged=win.findChild<QLabel*>("fullscreenPreviewImage"); QVERIFY(enlarged);
+    wheel(enlarged,imageRect(enlarged).center(),120);
+    QCOMPARE(zoom->text(),QString("3.1×"));
+    QTest::keyClick(win.findChild<QDialog*>("fullscreenPreview"),Qt::Key_Escape);
+    wheel(preview,imageRect(preview).center(),100000);
+    QCOMPARE(zoom->text(),QString("32.0×"));
+    wheel(preview,imageRect(preview).center(),-100000);
+    QCOMPARE(zoom->text(),QString("1.0×"));
+    fit->click();
+    QCOMPARE(server.frames.last()["focus_x"],selected["focus_x"]);
+    QCOMPARE(server.frames.last()["focus_y"],selected["focus_y"]);
     win.findChild<QCheckBox*>("check_liveView")->setChecked(false);
   }
   void fullAutofocusWorkflowWithSimulatedLensAndCamera() {

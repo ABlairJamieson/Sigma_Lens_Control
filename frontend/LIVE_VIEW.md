@@ -1,9 +1,9 @@
 # Live view, focus and independent housing power
 
 These frontend and ASI bridge changes require no Teensy firmware change. They use
-existing SF (set focus) and ST (status) commands. Hardware testing of the new live
-settings, speed, focus crop and autofocus remains pending; the tests use simulated
-cameras/lenses. No lens or camera was connected during development.
+existing SF (set focus) and ST (status) commands. Live settings, USB speed, focus crops and housing readbacks have been checked
+on pch5. Completed autofocus accuracy still needs calibration against the real
+lens/scene; automated tests use simulated cameras/lenses.
 
 ## Live exposure and response time
 
@@ -24,15 +24,14 @@ size; these help separate camera/host work from network/display costs.
 
 Full view uses the largest advertised binning that does not exceed the requested
 scale, then reduces the image for display. Fullscreen can request a larger image
-and therefore more processing/transfer. **Focus detail (crop)** instead reads
-an unbinned sensor ROI, up to 1024×768 pixels, at the selected location. This reduces transferred
-sensor pixels and retains fine detail for focus; it does not show the full scene.
-The display still fits that crop to the preview/fullscreen window.
+and therefore more processing/transfer. Autofocus temporarily reads an unbinned
+sensor ROI, up to 1024×768 pixels, at the selected location. This reduces transferred
+sensor pixels and retains fine detail for scoring. Manual wheel zoom is independent
+of that autofocus crop and enlarges the received preview for display.
 
 USB 3 only speeds the camera-to-host part of the path. Sensor readout/exposure,
 SDK buffering, image conversion/JPEG, the network and GUI display also contribute.
-No measured hardware speedup is claimed. Use the frame rate readout to compare
-full/focus view and fullscreen, and verify the actual negotiated USB speed on the
+Use the frame rate readout to compare full view, autofocus detail and fullscreen, and verify the actual negotiated USB speed on the
 host when testing (e.g. `lsusb -t`), rather than inferring it from image size.
 
 ## Selecting the focus region
@@ -180,3 +179,23 @@ sample. Progress, each median sharpness score, commanded positions and the retur
 phase are written to the normal session log. A return timeout reports uncertainty
 and the last reported position, without claiming the original focus was restored.
 An autofocus result remains visible if subsequent live frames time out.
+
+
+## Preview zoom
+
+Roll the mouse wheel over the preview to zoom in/out at the cursor (1× to 32×).
+Middle-drag pans; **Fit** returns to the entire image. This works in the main and
+fullscreen viewer, and each PCH retains its own zoom/pan while the app is open.
+Zoom is display-only: it enlarges the received preview, without changing capture
+settings, camera acquisition, the autofocus score, or the sensor-pixel focus ROI.
+Clicking moves the fixed 1024×768 sensor-pixel ROI through the displayed zoomed
+coordinates; its outline scales with zoom. Right-click still centres the ROI.
+
+The manual focus-crop checkbox is replaced by wheel zoom. Autofocus still requests
+an unbinned camera crop internally, temporarily shows that crop while running,
+and restores the display zoom afterward. Zoom and focus selection are locked
+while autofocus is active.
+
+**Use capture exposure/gain** is checked on startup. Duplicate live exposure/gain
+inputs are hidden while linked and appear only when that option is unchecked.
+The existing 2-second live-exposure cap still applies; still exposure is unchanged.

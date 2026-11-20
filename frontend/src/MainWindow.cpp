@@ -12,6 +12,8 @@
 #include <QScrollArea>
 #include <QFileInfo>
 #include <QMouseEvent>
+#include <QWheelEvent>
+#include <cmath>
 #include <QFileInfo>
 #include <QDateTime>
 #include <QDir>
@@ -96,7 +98,7 @@ MainWindow::MainWindow(QWidget *parent)
   {
     ui->label_mainPreview->installEventFilter(this);
     ui->label_mainPreview->setCursor(Qt::CrossCursor);
-    ui->label_mainPreview->setToolTip("Click the image to place the fixed 1024 × 768 focus ROI. Right-click to centre it. Use the Fullscreen button to enlarge.");
+    ui->label_mainPreview->setToolTip("Scroll to zoom at the cursor; middle-drag to pan. Click to place the fixed 1024 × 768 sensor-pixel focus ROI. Right-click to centre the ROI. Fit resets zoom; Fullscreen enlarges the viewer.");
     ui->label_mainPreview->setScaledContents(false);
     ui->label_mainPreview->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Ignored);
   }
@@ -123,11 +125,18 @@ MainWindow::MainWindow(QWidget *parent)
   auto liveControls = new QHBoxLayout;
   mLiveToggle = new QCheckBox("Live view", this); mLiveToggle->setObjectName("check_liveView");
   mFullscreenButton = new QPushButton("Fullscreen", this); mFullscreenButton->setObjectName("btn_fullscreen");
-  liveControls->addWidget(mLiveToggle); liveControls->addStretch(); liveControls->addWidget(mFullscreenButton);
+  mZoomLabel = new QLabel("1.0×",this); mZoomLabel->setObjectName("previewZoom");
+  mFitPreviewButton = new QPushButton("Fit",this); mFitPreviewButton->setObjectName("previewFit");
+  mFitPreviewButton->setToolTip("Show the entire preview without moving the focus ROI");
+  connect(mFitPreviewButton,&QPushButton::clicked,this,&MainWindow::fitPreview);
+  liveControls->addWidget(mLiveToggle); liveControls->addStretch();
+  liveControls->addWidget(mZoomLabel); liveControls->addWidget(mFitPreviewButton);
+  liveControls->addWidget(mFullscreenButton);
   ui->verticalLayout_previewBox->insertLayout(0, liveControls);
   auto settingsRow = new QHBoxLayout;
   mFollowCapture = new QCheckBox("Use capture exposure/gain", this); mFollowCapture->setChecked(true);
   mFollowCapture->setObjectName("liveFollowCapture");
+  mFollowCapture->setToolTip("Checked by default: live view follows capture exposure and gain. Live exposure is capped at 2 seconds. Uncheck to use separate preview settings.");
   mLiveExposure = new QSpinBox(this); mLiveExposure->setRange(1,2000); mLiveExposure->setSuffix(" ms");
   mLiveExposure->setObjectName("liveExposure"); mLiveExposure->setMaximumWidth(115);
   mLiveExposure->setToolTip("Live exposure is limited to 2 seconds. Capture exposure is unchanged.");
@@ -136,7 +145,9 @@ MainWindow::MainWindow(QWidget *parent)
   settingsRow->addWidget(mFollowCapture); settingsRow->addWidget(mLiveExposure); settingsRow->addWidget(mLiveGain);
   ui->verticalLayout_previewBox->insertLayout(1, settingsRow);
   auto focusRow = new QHBoxLayout;
+  // Autofocus requests its own sensor crop internally; manual zoom is independent.
   mFocusView = new QCheckBox("Focus detail (crop)",this); mFocusView->setObjectName("focusDetail");
+  mFocusView->hide();
   mFocusView->setToolTip("Unbinned view of the selected 1024 × 768 focus ROI. Select its location by clicking the full image; right-click to centre.");
   mFocusRadius = new QSpinBox(this); mFocusRadius->setRange(16,4545); mFocusRadius->setValue(256);
   mFocusRadius->setObjectName("autofocusRadius"); mFocusRadius->setMaximumWidth(110);
@@ -145,7 +156,7 @@ MainWindow::MainWindow(QWidget *parent)
   mAutofocusButton = new QPushButton("Autofocus",this); mAutofocusButton->setObjectName("autofocusStart");
   mCancelFocus = new QPushButton("Cancel",this); mCancelFocus->setEnabled(false);
   mCancelFocus->setObjectName("autofocusCancel");
-  focusRow->addWidget(mFocusView); focusRow->addWidget(mFocusRadius);
+  focusRow->addWidget(mFocusRadius);
   focusRow->addWidget(mAutofocusButton); focusRow->addWidget(mCancelFocus);
   ui->verticalLayout_previewBox->insertLayout(2,focusRow);
   mLiveStatus = new QLabel("Live view idle — exposure limited to 2 s",this);
@@ -241,10 +252,13 @@ MainWindow::MainWindow(QWidget *parent)
       QSignalBlocker blocker(ui->tabWidget_devices); ui->tabWidget_devices->setCurrentIndex(mFocusSlot-1); return;
     }
     if (index < 0 || index >= 8 || index+1 == mPreviewSlot) return;
-    mFocusResult.clear(); mLive->stop(); mPreviewSlot = index+1; renderPreview(); updatePreviewControls();
+    mPreviewPanning=false; ui->label_mainPreview->setCursor(Qt::CrossCursor);
+    if(mFullscreenLabel) mFullscreenLabel->setCursor(Qt::CrossCursor);
+    mFocusResult.clear(); mLive->stop(); mPreviewSlot = index+1; updateLiveSettings(); renderPreview(); updatePreviewControls();
     if (mLiveToggle->isChecked()) startLive();
   });
   initPanels();
+  updateLiveSettings();
   updateCaptureAllEnabled(); updatePreviewControls();
 }
 
@@ -347,6 +361,7 @@ void MainWindow::updateLiveSettings() {
       mLiveGain->setValue(settings.gain);
     }
   }
+  mLiveExposure->setVisible(!follow); mLiveGain->setVisible(!follow);
   mLiveExposure->setEnabled(!follow && !mAutofocus->active() && !mFocusPreparing);
   mLiveGain->setEnabled(!follow && !mAutofocus->active() && !mFocusPreparing);
   mLive->setSettings(mLiveExposure->value()*1000,mLiveGain->value());
@@ -386,7 +401,7 @@ void MainWindow::finishAutofocus(const QString& message) {
   mFollowCapture->setEnabled(true);
   mFocusResult=message;
   mLiveStatus->setText(message); onPanelStatusMessage(mFocusSlot,message);
-  updateLiveSettings(); updatePreviewControls(); updateCaptureAllEnabled();
+  updateLiveSettings(); updatePreviewControls(); updateCaptureAllEnabled(); renderPreview();
   if (mCloseAfterFocus) { mCloseAfterFocus=false; QTimer::singleShot(0,this,&QWidget::close); }
 }
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -408,6 +423,9 @@ void MainWindow::updatePreviewControls() {
 }
 void MainWindow::renderPreview() {
   const auto& image = mPreviewFrames[mPreviewSlot-1];
+  if (mZoomLabel) mZoomLabel->setText((mAutofocus->active() || mFocusPreparing) ? QString("AF detail") :
+    QString("%1×").arg(1.0/mZoomRegions[mPreviewSlot-1].width(),0,'f',1));
+  if (mFitPreviewButton) mFitPreviewButton->setEnabled(!mAutofocus->active() && !mFocusPreparing && !image.isNull());
   ui->group_preview->setTitle(QString("Preview — PCH%1").arg(mPreviewSlot));
   if (image.isNull()) {
     ui->label_mainPreview->setPixmap(QPixmap());
@@ -505,11 +523,58 @@ void MainWindow::onPanelStatusMessage(int slot1, const QString& msg)
 }
 
 
+QRect MainWindow::previewCrop() const {
+  const auto& image=mPreviewFrames[mPreviewSlot-1];
+  if (image.isNull()) return QRect();
+  const auto view=(mAutofocus->active() || mFocusPreparing) ? QRectF(0,0,1,1) : mZoomRegions[mPreviewSlot-1];
+  const int width=std::clamp(qRound(view.width()*image.width()),1,image.width());
+  const int height=std::clamp(qRound(view.height()*image.height()),1,image.height());
+  return QRect(std::clamp(qRound(view.x()*image.width()),0,image.width()-width),
+               std::clamp(qRound(view.y()*image.height()),0,image.height()-height),width,height);
+}
+QRect MainWindow::previewImageRect(QLabel* label) const {
+  const QSize shown=previewCrop().size().scaled(label->contentsRect().size(),Qt::KeepAspectRatio);
+  const auto content=label->contentsRect();
+  return QRect(QPoint(content.x()+(content.width()-shown.width())/2,
+                      content.y()+(content.height()-shown.height())/2),shown);
+}
+QRectF MainWindow::visibleSensorRegion() const {
+  const auto& image=mPreviewFrames[mPreviewSlot-1];
+  if (image.isNull()) return QRectF();
+  const auto crop=previewCrop(); const auto frame=mFrameRegions[mPreviewSlot-1];
+  return QRectF(frame.x()+double(crop.x())/image.width()*frame.width(),
+                frame.y()+double(crop.y())/image.height()*frame.height(),
+                double(crop.width())/image.width()*frame.width(),
+                double(crop.height())/image.height()*frame.height());
+}
+void MainWindow::fitPreview() {
+  if (mAutofocus->active() || mFocusPreparing) return;
+  mPreviewPanning=false;
+  if(mPanLabel) mPanLabel->setCursor(Qt::CrossCursor);
+  mZoomRegions[mPreviewSlot-1]=QRectF(0,0,1,1); renderPreview();
+}
+void MainWindow::zoomPreview(QLabel* label,const QPoint& position,double steps) {
+  if (mAutofocus->active() || mFocusPreparing || mPreviewFrames[mPreviewSlot-1].isNull()) return;
+  const auto shown=previewImageRect(label);
+  if(shown.isEmpty() || !shown.contains(position)) return;
+  mPreviewPanning=false;
+  label->setCursor(Qt::CrossCursor);
+  auto& view=mZoomRegions[mPreviewSlot-1];
+  const double zoom=std::clamp(std::pow(1.25,steps)/view.width(),1.0,32.0);
+  const QPointF relative(double(position.x()-shown.x())/shown.width(),double(position.y()-shown.y())/shown.height());
+  const QPointF anchor(view.x()+relative.x()*view.width(),view.y()+relative.y()*view.height());
+  const double extent=1.0/zoom;
+  const QPointF centre(anchor.x()+(.5-relative.x())*extent,anchor.y()+(.5-relative.y())*extent);
+  view=QRectF(std::clamp(centre.x()-extent/2,0.0,1.0-extent),
+              std::clamp(centre.y()-extent/2,0.0,1.0-extent),extent,extent);
+  renderPreview();
+}
+
 QPixmap MainWindow::focusPreview(const QImage& image, const QSize& size) const {
-  auto pixmap=QPixmap::fromImage(image).scaled(size,Qt::KeepAspectRatio,Qt::SmoothTransformation);
+  auto pixmap=QPixmap::fromImage(image.copy(previewCrop())).scaled(size,Qt::KeepAspectRatio,Qt::SmoothTransformation);
   const int slot=mPreviewSlot-1;
   if (pixmap.isNull() || !mFrameCoordinatesValid[slot]) return pixmap;
-  const auto frame=mFrameRegions[slot];
+  const auto frame=visibleSensorRegion();
   QPainter painter(&pixmap); painter.setPen(QPen(QColor("#ffdd00"),2));
   QPointF centre=mFocusCenters[slot];
   if (!mSensorSizes[slot].isEmpty()) {
@@ -532,12 +597,11 @@ void MainWindow::selectFocusRegion(QLabel* label, const QPoint& position, bool c
   if (mAutofocus->active() || mFocusPreparing) return;
   const int slot=mPreviewSlot-1;
   if (mPreviewFrames[slot].isNull() || !mFrameCoordinatesValid[slot]) return;
-  const QSize shown=mPreviewFrames[slot].size().scaled(label->contentsRect().size(),Qt::KeepAspectRatio);
+  const QRect imageRect=previewImageRect(label);
+  const QSize shown=imageRect.size();
   if (shown.isEmpty()) return;
-  const QRect imageRect(QPoint(label->contentsRect().x()+(label->contentsRect().width()-shown.width())/2,
-                               label->contentsRect().y()+(label->contentsRect().height()-shown.height())/2),shown);
   if (!imageRect.contains(position)) return; // Ignore letterbox/pillarbox margins.
-  const auto region=mFrameRegions[slot];
+  const auto region=visibleSensorRegion();
   mFocusCenters[slot]=centre ? QPointF(0.5,0.5) :
     QPointF(region.x()+double(position.x()-imageRect.x())/shown.width()*region.width(),
             region.y()+double(position.y()-imageRect.y())/shown.height()*region.height());
@@ -551,9 +615,38 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
   const bool preview=obj==ui->label_mainPreview || obj==mFullscreenLabel;
   if ((preview || obj==mFullscreen) && event->type()==QEvent::Resize)
     QTimer::singleShot(0,this,&MainWindow::renderPreview);
+  if (preview && event->type()==QEvent::Wheel) {
+    auto wheel=static_cast<QWheelEvent*>(event);
+    const double steps=wheel->angleDelta().y()!=0 ? wheel->angleDelta().y()/120.0 : wheel->pixelDelta().y()/100.0;
+    zoomPreview(static_cast<QLabel*>(obj),wheel->position().toPoint(),steps);
+    wheel->accept(); return true;
+  }
+  if (preview && event->type()==QEvent::MouseButtonPress) {
+    auto mouse=static_cast<QMouseEvent*>(event); auto label=static_cast<QLabel*>(obj);
+    if(mouse->button()==Qt::MiddleButton && !mAutofocus->active() && !mFocusPreparing &&
+       !mPreviewFrames[mPreviewSlot-1].isNull() && previewImageRect(label).contains(mouse->pos())) {
+      mPreviewPanning=true; mPanLabel=label; mPanSlot=mPreviewSlot;
+      mPanStart=mouse->pos(); mPanRegion=mZoomRegions[mPreviewSlot-1];
+      mPanDisplaySize=previewImageRect(label).size(); label->setCursor(Qt::ClosedHandCursor); return true;
+    }
+  }
+  if (preview && event->type()==QEvent::MouseMove && mPreviewPanning && obj==mPanLabel && mPanSlot==mPreviewSlot) {
+    auto mouse=static_cast<QMouseEvent*>(event);
+    if(!mAutofocus->active() && !mFocusPreparing) {
+      const QPoint delta=mouse->pos()-mPanStart;
+      auto& view=mZoomRegions[mPreviewSlot-1];
+      view=QRectF(std::clamp(mPanRegion.x()-double(delta.x())/mPanDisplaySize.width()*mPanRegion.width(),0.0,1.0-mPanRegion.width()),
+                  std::clamp(mPanRegion.y()-double(delta.y())/mPanDisplaySize.height()*mPanRegion.height(),0.0,1.0-mPanRegion.height()),
+                  mPanRegion.width(),mPanRegion.height()); renderPreview();
+    }
+    return true;
+  }
   if (preview && event->type()==QEvent::MouseButtonDblClick) return true;
   if (preview && event->type()==QEvent::MouseButtonRelease) {
     auto mouse=static_cast<QMouseEvent*>(event);
+    if(mouse->button()==Qt::MiddleButton) {
+      mPreviewPanning=false; static_cast<QLabel*>(obj)->setCursor(Qt::CrossCursor); return true;
+    }
     if (mouse->button()==Qt::LeftButton || mouse->button()==Qt::RightButton) {
       selectFocusRegion(static_cast<QLabel*>(obj),mouse->pos(),mouse->button()==Qt::RightButton); return true;
     }
