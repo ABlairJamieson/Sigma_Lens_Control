@@ -35,3 +35,8 @@ logs/
 __pycache__/
 *.pyc
 tools/cameras.json
+
+# Frontend executables and compiler-generated configuration
+/frontend/SigmaControl
+/frontend/bin/
+moc_predefs.h

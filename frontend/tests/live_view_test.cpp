@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QBuffer>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QCheckBox>
 #include <QPushButton>
 #include <QLabel>
@@ -94,6 +95,8 @@ private slots:
     QCOMPARE(server.frames[1]["exposure_us"].toInt(),25000);
     QCOMPARE(server.frames[1]["gain"].toInt(),70);
     QCOMPARE(server.frames[1]["view_mode"].toString(),QString("focus"));
+    QCOMPARE(server.frames[1]["max_width"].toInt(),1024);
+    QCOMPARE(server.frames[1]["max_height"].toInt(),768);
     QCOMPARE(server.frames[1]["focus_token"].toString(),QString("new-position"));
     QCOMPARE(server.frames[1]["focus_x"].toDouble(),.75);
     QCOMPARE(server.frames[1]["focus_y"].toDouble(),.25);
@@ -132,7 +135,7 @@ private slots:
     QCOMPARE(decoded.constScanLine(123)[101],uchar(0xf1));
     QVERIFY(TiffWriter::readGray16Display(files.filePath("missing.tiff"),&error).isNull());
     QVERIFY(!error.isEmpty());
-    PreviewServer server; server.automatic=true;
+    PreviewServer server; server.automatic=true; server.focusCapable=true;
     MainWindow win; win.resize(1100,800); win.show();
     DevicePanel *panel=nullptr,*other=nullptr;
     for(auto p:win.findChildren<DevicePanel*>()) {
@@ -159,9 +162,13 @@ private slots:
     QVERIFY(QMetaObject::invokeMethod(panel,"onCameraConnectClicked"));
     auto live=win.findChild<QCheckBox*>("check_liveView"); live->setChecked(true);
     QTRY_VERIFY(server.frames.size()>2);
+    win.findChild<QCheckBox*>("focusDetail")->setChecked(true);
+    QTRY_COMPARE(win.findChild<QLabel*>("previewZoom")->text(),QString("1:1"));
     live->setChecked(false);
     QTRY_VERIFY(status->text().contains("Last capture"));
     QVERIFY(status->text().contains("3200 × 2400"));
+    QVERIFY(win.findChild<QLabel*>("previewZoom")->text()!="1:1");
+    QVERIFY(win.findChild<QPushButton*>("previewFit")->isEnabled());
     // An inactive PCH's capture is remembered and loaded only when selected.
     other->captureSaved(2,path);
     auto tabs=win.findChild<QTabWidget*>("tabWidget_devices"); tabs->setCurrentIndex(1);
@@ -176,18 +183,18 @@ private slots:
     MainWindow win; DevicePanel* panel=nullptr;
     for(auto p:win.findChildren<DevicePanel*>()) if(p->slotIndex()==1) panel=p;
     QVERIFY(panel);
-    auto exposure=win.findChild<QSpinBox*>("liveExposure"); auto gain=win.findChild<QSpinBox*>("liveGain");
+    auto exposure=win.findChild<QDoubleSpinBox*>("liveExposure"); auto gain=win.findChild<QSpinBox*>("liveGain");
     auto follow=win.findChild<QCheckBox*>("liveFollowCapture"); QVERIFY(exposure && gain && follow);
     QVERIFY(follow->isChecked()); QVERIFY(exposure->isHidden()); QVERIFY(gain->isHidden());
-    QCOMPARE(exposure->value(),qRound(panel->cameraSettings().exposureMs));
-    auto capture=panel->cameraSettings(); capture.exposureMs=123; capture.gain=77; panel->setCameraSettings(capture);
-    QCOMPARE(exposure->value(),123); QCOMPARE(gain->value(),77); QVERIFY(!exposure->isEnabled());
+    QCOMPARE(exposure->value(),panel->cameraSettings().exposureMs);
+    auto capture=panel->cameraSettings(); capture.exposureMs=123.456; capture.gain=77; panel->setCameraSettings(capture);
+    QCOMPARE(exposure->value(),123.456); QCOMPARE(gain->value(),77); QVERIFY(!exposure->isEnabled());
     QVERIFY(follow->isChecked()); QVERIFY(exposure->isHidden()); QVERIFY(gain->isHidden());
-    capture.exposureMs=4000; panel->setCameraSettings(capture); QCOMPARE(exposure->value(),2000);
+    capture.exposureMs=4000; panel->setCameraSettings(capture); QCOMPARE(exposure->value(),2000.0);
     QCOMPARE(panel->cameraSettings().exposureMs,4000.0);
     follow->setChecked(false); exposure->setValue(25); gain->setValue(44);
     capture.exposureMs=200; capture.gain=12; panel->setCameraSettings(capture);
-    QCOMPARE(exposure->value(),25); QCOMPARE(gain->value(),44);
+    QCOMPARE(exposure->value(),25.0); QCOMPARE(gain->value(),44);
     QVERIFY(!exposure->isHidden()); QVERIFY(!gain->isHidden());
     win.resize(1024,700); win.show(); QTest::qWait(50);
     QVERIFY2(win.width()<=1024,"Live controls force a wide main window");
@@ -222,9 +229,10 @@ private slots:
     win.findChild<QCheckBox*>("check_liveView")->setChecked(true);
     QTRY_VERIFY(server.frames.size()>2);
     auto preview=win.findChild<QLabel*>("label_mainPreview");
-    auto point=[&](double x,double y) {
+    auto point=[&](double x,double y,bool native=false) {
       const auto content=preview->contentsRect();
-      const QSize shown=QSize(320,240).scaled(content.size(),Qt::KeepAspectRatio);
+      const QSize shown=native ? QSize(320,240)/preview->devicePixelRatioF() :
+        QSize(320,240).scaled(content.size(),Qt::KeepAspectRatio);
       return QPoint(content.x()+(content.width()-shown.width())/2+qRound(shown.width()*x),
                     content.y()+(content.height()-shown.height())/2+qRound(shown.height()*y));
     };
@@ -245,7 +253,7 @@ private slots:
     const double cx=selected["focus_x"].toDouble(), cy=selected["focus_y"].toDouble();
     const double left=int(std::clamp(cx*9576-512,0.0,8552.0))/8*8;
     const double top=int(std::clamp(cy*6388-384,0.0,5620.0))/2*2;
-    QTest::mouseClick(preview,Qt::LeftButton,Qt::NoModifier,point(.75,.25));
+    QTest::mouseClick(preview,Qt::LeftButton,Qt::NoModifier,point(.75,.25,true));
     QTRY_VERIFY(std::abs(server.frames.last()["focus_x"].toDouble()-(left+768)/9576)<.001);
     QTRY_VERIFY(std::abs(server.frames.last()["focus_y"].toDouble()-(top+192)/6388)<.001);
     QTest::mouseClick(preview,Qt::RightButton,Qt::NoModifier,point(.5,.5));
@@ -382,11 +390,11 @@ private slots:
     auto start=win.findChild<QPushButton*>("autofocusStart"); start->click();
     QVERIFY(!start->isEnabled());
     QTest::mouseClick(preview,Qt::RightButton,Qt::NoModifier,roiPoint); // locked during AF
-    QTRY_VERIFY_WITH_TIMEOUT(win.findChild<QLabel*>("liveStatus")->text().contains("Autofocus complete"),15000);
+    QTRY_VERIFY_WITH_TIMEOUT(win.findChild<QLabel*>("liveStatus")->text().contains("Autofocus verified"),15000);
     QCOMPARE(position,9020); QVERIFY(start->isEnabled());
     QVERIFY(std::abs(server.frames.last()["focus_x"].toDouble()-.75)<.01);
     QVERIFY(!panel->cameraBusy());
-    QVERIFY(!win.findChild<QCheckBox*>("focusDetail")->isChecked());
+    QVERIFY(win.findChild<QCheckBox*>("focusDetail")->isChecked());
     win.findChild<QCheckBox*>("check_liveView")->setChecked(false);
   }
   void rejectedFocusPreflight_data() {

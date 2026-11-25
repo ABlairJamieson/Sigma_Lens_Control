@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QVector>
 #include <QJsonObject>
 
@@ -23,6 +24,10 @@ signals:
 private:
   enum State { Idle, Backoff, Moving, Settling, Sampling, ReturningBackoff, Returning } mState = Idle;
   QTimer mDeadline, mSettle, mTotal;
+  QElapsedTimer mPhaseTime;
+  qint64 mMoveMs=0, mSettleMs=0, mFirstFrameMs=0;
+  double mAcquisitionMs=0;
+  bool mVerifying=false;
   QVector<int> mPositions;
   QVector<double> mSamples;
   int mOriginal=0, mLow=0, mHigh=0, mIndex=0, mTarget=0, mAckTarget=0, mStage=0, mBest=0;
