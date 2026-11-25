@@ -17,6 +17,7 @@
 #include <QMouseEvent>
 #include <functional>
 #include "LiveViewClient.h"
+#include "TiffWriter.h"
 #include "MainWindow.h"
 #include "DevicePanel.h"
 #include "LensClient.h"
@@ -77,6 +78,7 @@ private slots:
   void initTestCase() {
     QVERIFY(mData.isValid());
     qputenv("XDG_DATA_HOME",mData.path().toUtf8());
+    QSettings::setPath(QSettings::NativeFormat,QSettings::UserScope,mData.path());
   }
   void settingsChangeOnExistingConnection() {
     PreviewServer server; LiveViewClient live;
@@ -113,6 +115,61 @@ private slots:
     server.liveSocket->write("{\"ok\":false,\"cmd\":\"live_frame\",\"error\":\"Still timed out after stream restart\"}\n");
     QTRY_COMPARE(failed.count(),1);
     QTest::qWait(350); QCOMPARE(server.frames.size(),4);
+  }
+  void capturedTiffKeepsFullDetailAndReturnsAfterLiveView() {
+    QTemporaryDir files; QVERIFY(files.isValid());
+    const int width=3200,height=2400;
+    QByteArray raw(width*height*2,Qt::Uninitialized);
+    for(int y=0;y<height;++y) for(int x=0;x<width;++x) {
+      const quint16 value=(x%2) ? 0xf123 : 0x1234;
+      raw[2*(y*width+x)]=char(value&255); raw[2*(y*width+x)+1]=char(value>>8);
+    }
+    const auto path=files.filePath("capture.tiff"); QString error;
+    QVERIFY2(TiffWriter::writeGray16Tiff(path,width,height,raw,nullptr,&error),qPrintable(error));
+    const auto decoded=TiffWriter::readGray16Display(path,&error);
+    QCOMPARE(decoded.size(),QSize(width,height));
+    QCOMPARE(decoded.constScanLine(123)[100],uchar(0x12));
+    QCOMPARE(decoded.constScanLine(123)[101],uchar(0xf1));
+    QVERIFY(TiffWriter::readGray16Display(files.filePath("missing.tiff"),&error).isNull());
+    QVERIFY(!error.isEmpty());
+    PreviewServer server; server.automatic=true;
+    MainWindow win; win.resize(1100,800); win.show();
+    DevicePanel *panel=nullptr,*other=nullptr;
+    for(auto p:win.findChildren<DevicePanel*>()) {
+      if(p->slotIndex()==1) panel=p;
+      if(p->slotIndex()==2) other=p;
+    }
+    QVERIFY(panel && other);
+    panel->captureSaved(1,path);
+    auto status=win.findChild<QLabel*>("liveStatus");
+    QTRY_VERIFY(status->text().contains("3200 × 2400"));
+    // The small PNG must never replace the loaded TIFF source.
+    QImage tiny(32,24,QImage::Format_Grayscale8); tiny.fill(0);
+    const auto png=files.filePath("preview.png"); QVERIFY(tiny.save(png));
+    panel->previewSaved(1,png);
+    auto preview=win.findChild<QLabel*>("label_mainPreview");
+    const auto centre=preview->contentsRect().center();
+    QWheelEvent wheel(QPointF(centre),QPointF(preview->mapToGlobal(centre)),QPoint(),QPoint(0,120*8),
+                      Qt::NoButton,Qt::NoModifier,Qt::NoScrollPhase,false);
+    QApplication::sendEvent(preview,&wheel);
+    QVERIFY(win.findChild<QLabel*>("previewZoom")->text()!="1.0×");
+    QVERIFY(preview->pixmap(Qt::ReturnByValue).toImage().pixelColor(10,10).red()>0);
+    panel->findChild<QLineEdit*>("edit_host")->setText("127.0.0.1");
+    panel->findChild<QSpinBox*>("spin_cameraPort")->setValue(server.serverPort());
+    QVERIFY(QMetaObject::invokeMethod(panel,"onCameraConnectClicked"));
+    auto live=win.findChild<QCheckBox*>("check_liveView"); live->setChecked(true);
+    QTRY_VERIFY(server.frames.size()>2);
+    live->setChecked(false);
+    QTRY_VERIFY(status->text().contains("Last capture"));
+    QVERIFY(status->text().contains("3200 × 2400"));
+    // An inactive PCH's capture is remembered and loaded only when selected.
+    other->captureSaved(2,path);
+    auto tabs=win.findChild<QTabWidget*>("tabWidget_devices"); tabs->setCurrentIndex(1);
+    QTRY_VERIFY(status->text().contains("3200 × 2400"));
+    tabs->setCurrentIndex(0);
+    QTRY_VERIFY(status->text().contains("3200 × 2400"));
+    MainWindow restarted;
+    QTRY_VERIFY(restarted.findChild<QLabel*>("liveStatus")->text().contains("3200 × 2400"));
   }
   void compactControlsAndFollowCapture() {
     QTemporaryDir settings; QSettings::setPath(QSettings::NativeFormat,QSettings::UserScope,settings.path());

@@ -8,6 +8,9 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QImageReader>
+#include <QFutureWatcher>
+#include <QtConcurrent>
+#include "TiffWriter.h"
 #include <QScrollBar>
 #include <QScrollArea>
 #include <QFileInfo>
@@ -235,7 +238,7 @@ MainWindow::MainWindow(QWidget *parent)
       .arg(metadata.value("sensor_h").toInt()).arg(metadata.value("focus_score").toDouble(),0,'f',1)
       .arg(mFollowCapture->isChecked() && panelBySlot1(mPreviewSlot)->cameraSettings().exposureMs>2000 ? " | live capped at 2 s" : ""));
   });
-  connect(mLiveToggle, &QCheckBox::toggled, this, [this](bool on) { if (on) startLive(); else mLive->stop(); });
+  connect(mLiveToggle, &QCheckBox::toggled, this, [this](bool on) { if (on) startLive(); else { mLive->stop(); showLastCapture(); } });
   connect(mFullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
   connect(mLive, &LiveViewClient::frameReady, this, [this](const QImage& image) {
     mPreviewFrames[mPreviewSlot-1] = image; renderPreview();
@@ -257,10 +260,16 @@ MainWindow::MainWindow(QWidget *parent)
     if (index < 0 || index >= 8 || index+1 == mPreviewSlot) return;
     mPreviewPanning=false; ui->label_mainPreview->setCursor(Qt::CrossCursor);
     if(mFullscreenLabel) mFullscreenLabel->setCursor(Qt::CrossCursor);
-    mFocusResult.clear(); mLive->stop(); mPreviewSlot = index+1; updateLiveSettings(); renderPreview(); updatePreviewControls();
+    mFocusResult.clear(); mLive->stop(); mPreviewSlot = index+1; updateLiveSettings(); if (!mLiveToggle->isChecked()) showLastCapture(); renderPreview(); updatePreviewControls();
     if (mLiveToggle->isChecked()) startLive();
   });
   initPanels();
+  QSettings settings("HyperK","SigmaControl");
+  for (int slot=1;slot<=8;++slot) {
+    const auto path=settings.value(QString("pch%1/lastCaptureTiff").arg(slot)).toString();
+    if (QFileInfo::exists(path)) mCapturedTiffPaths[slot-1]=path;
+  }
+  showLastCapture();
   updateLiveSettings();
   updateCaptureAllEnabled(); updatePreviewControls();
 }
@@ -425,7 +434,7 @@ void MainWindow::updatePreviewControls() {
   if (!connected) mLiveToggle->setChecked(false);
 }
 void MainWindow::renderPreview() {
-  const auto& image = mPreviewFrames[mPreviewSlot-1];
+  const auto& image = displayedImage();
   if (mZoomLabel) mZoomLabel->setText((mAutofocus->active() || mFocusPreparing) ? QString("AF detail") :
     QString("%1×").arg(1.0/mZoomRegions[mPreviewSlot-1].width(),0,'f',1));
   if (mFitPreviewButton) mFitPreviewButton->setEnabled(!mAutofocus->active() && !mFocusPreparing && !image.isNull());
@@ -461,6 +470,47 @@ void MainWindow::openFullscreen() {
   const auto screenSize = mFullscreen->screen()->size() * mFullscreen->screen()->devicePixelRatio();
   mLive->setTargetSize(screenSize); renderPreview();
 }
+const QImage& MainWindow::displayedImage() const {
+  if (!mLiveToggle->isChecked() && mCapturedImageSlot==mPreviewSlot &&
+      mCapturedImagePath==mCapturedTiffPaths[mPreviewSlot-1] && !mCapturedImage.isNull())
+    return mCapturedImage;
+  return mPreviewFrames[mPreviewSlot-1];
+}
+
+void MainWindow::showLastCapture() {
+  const int slot=mPreviewSlot;
+  const auto path=mCapturedTiffPaths[slot-1];
+  const auto generation=++mCaptureLoadGeneration;
+  auto show = [this] {
+    const auto size=mCapturedImage.size();
+    mSensorSizes[mPreviewSlot-1]=size;
+    mFrameRegions[mPreviewSlot-1]=QRectF(0,0,1,1);
+    mFrameCoordinatesValid[mPreviewSlot-1]=true;
+    mLiveStatus->setText(QString("Last capture — %1 × %2 pixels | %3")
+      .arg(size.width()).arg(size.height()).arg(QFileInfo(mCapturedImagePath).fileName()));
+    renderPreview();
+  };
+  if (path.isEmpty()) return;
+  if (mCapturedImageSlot==slot && mCapturedImagePath==path && !mCapturedImage.isNull()) { show(); return; }
+  mCapturedImage=QImage(); mCapturedImageSlot=-1; mCapturedImagePath.clear();
+  mLiveStatus->setText("Loading full-resolution TIFF…");
+  auto watcher=new QFutureWatcher<QPair<QImage,QString>>(this);
+  connect(watcher,&QFutureWatcher<QPair<QImage,QString>>::finished,this,[this,watcher,slot,path,generation,show] {
+    const auto result=watcher->result(); watcher->deleteLater();
+    if (generation!=mCaptureLoadGeneration || mLiveToggle->isChecked() || slot!=mPreviewSlot ||
+        path!=mCapturedTiffPaths[slot-1]) return;
+    if (result.first.isNull()) {
+      mLiveStatus->setText("Full-resolution TIFF load failed: "+result.second);
+      onPanelStatusMessage(slot,mLiveStatus->text()); return;
+    }
+    mCapturedImage=result.first; mCapturedImageSlot=slot; mCapturedImagePath=path; show();
+  });
+  watcher->setFuture(QtConcurrent::run([path] {
+    QString error; auto image=TiffWriter::readGray16Display(path,&error);
+    return qMakePair(image,error);
+  }));
+}
+
 void MainWindow::onPanelPreviewSaved(int slot1, const QString& path) {
   if (slot1 < 1 || slot1 > 8) return;
   QImage image(path);
@@ -527,7 +577,7 @@ void MainWindow::onPanelStatusMessage(int slot1, const QString& msg)
 
 
 QRect MainWindow::previewCrop() const {
-  const auto& image=mPreviewFrames[mPreviewSlot-1];
+  const auto& image=displayedImage();
   if (image.isNull()) return QRect();
   const auto view=(mAutofocus->active() || mFocusPreparing) ? QRectF(0,0,1,1) : mZoomRegions[mPreviewSlot-1];
   const int width=std::clamp(qRound(view.width()*image.width()),1,image.width());
@@ -542,7 +592,7 @@ QRect MainWindow::previewImageRect(QLabel* label) const {
                       content.y()+(content.height()-shown.height())/2),shown);
 }
 QRectF MainWindow::visibleSensorRegion() const {
-  const auto& image=mPreviewFrames[mPreviewSlot-1];
+  const auto& image=displayedImage();
   if (image.isNull()) return QRectF();
   const auto crop=previewCrop(); const auto frame=mFrameRegions[mPreviewSlot-1];
   return QRectF(frame.x()+double(crop.x())/image.width()*frame.width(),
@@ -557,7 +607,7 @@ void MainWindow::fitPreview() {
   mZoomRegions[mPreviewSlot-1]=QRectF(0,0,1,1); renderPreview();
 }
 void MainWindow::zoomPreview(QLabel* label,const QPoint& position,double steps) {
-  if (mAutofocus->active() || mFocusPreparing || mPreviewFrames[mPreviewSlot-1].isNull()) return;
+  if (mAutofocus->active() || mFocusPreparing || displayedImage().isNull()) return;
   const auto shown=previewImageRect(label);
   if(shown.isEmpty() || !shown.contains(position)) return;
   mPreviewPanning=false;
@@ -574,7 +624,7 @@ void MainWindow::zoomPreview(QLabel* label,const QPoint& position,double steps) 
 }
 
 QPixmap MainWindow::focusPreview(const QImage& image, const QSize& size) const {
-  auto pixmap=QPixmap::fromImage(image.copy(previewCrop())).scaled(size,Qt::KeepAspectRatio,Qt::SmoothTransformation);
+  auto pixmap=QPixmap::fromImage(image.copy(previewCrop()).scaled(size,Qt::KeepAspectRatio,Qt::SmoothTransformation));
   const int slot=mPreviewSlot-1;
   if (pixmap.isNull() || !mFrameCoordinatesValid[slot]) return pixmap;
   const auto frame=visibleSensorRegion();
@@ -599,7 +649,7 @@ QPixmap MainWindow::focusPreview(const QImage& image, const QSize& size) const {
 void MainWindow::selectFocusRegion(QLabel* label, const QPoint& position, bool centre) {
   if (mAutofocus->active() || mFocusPreparing) return;
   const int slot=mPreviewSlot-1;
-  if (mPreviewFrames[slot].isNull() || !mFrameCoordinatesValid[slot]) return;
+  if (displayedImage().isNull() || !mFrameCoordinatesValid[slot]) return;
   const QRect imageRect=previewImageRect(label);
   const QSize shown=imageRect.size();
   if (shown.isEmpty()) return;
@@ -627,7 +677,7 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
   if (preview && event->type()==QEvent::MouseButtonPress) {
     auto mouse=static_cast<QMouseEvent*>(event); auto label=static_cast<QLabel*>(obj);
     if(mouse->button()==Qt::MiddleButton && !mAutofocus->active() && !mFocusPreparing &&
-       !mPreviewFrames[mPreviewSlot-1].isNull() && previewImageRect(label).contains(mouse->pos())) {
+       !displayedImage().isNull() && previewImageRect(label).contains(mouse->pos())) {
       mPreviewPanning=true; mPanLabel=label; mPanSlot=mPreviewSlot;
       mPanStart=mouse->pos(); mPanRegion=mZoomRegions[mPreviewSlot-1];
       mPanDisplaySize=previewImageRect(label).size(); label->setCursor(Qt::ClosedHandCursor); return true;
@@ -660,6 +710,11 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 void MainWindow::onPanelCaptureSaved(int slot1, const QString& path)
 {
   mLastCapturedTiffPath = path;
+  if (slot1>=1 && slot1<=8) {
+    mCapturedTiffPaths[slot1-1]=QFileInfo(path).absoluteFilePath();
+    QSettings("HyperK","SigmaControl").setValue(QString("pch%1/lastCaptureTiff").arg(slot1),mCapturedTiffPaths[slot1-1]);
+    if (slot1==mPreviewSlot && !mLiveToggle->isChecked()) showLastCapture();
+  }
   if (mCaptureAllTotal > 0)
   {
     mCaptureAllDone++;

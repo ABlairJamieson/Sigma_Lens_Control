@@ -2,6 +2,7 @@
 
 #include <QString>
 #include <QByteArray>
+#include <QImage>
 
 namespace TiffWriter
 {
@@ -21,6 +22,9 @@ namespace TiffWriter
     quint32 fNumberNum = 0;        // e.g. f/2.8 => 28/10
     quint32 fNumberDen = 1;
   };
+
+  // Read the full spatial resolution for display; the saved 16-bit data stays intact.
+  QImage readGray16Display(const QString& path, QString* errOut = nullptr);
 
   // Save RAW16 little-endian grayscale image as 16-bit TIFF.
   // raw must contain w*h*2 bytes.

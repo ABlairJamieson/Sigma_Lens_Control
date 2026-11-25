@@ -24,4 +24,4 @@ FORMS += \
     src/DevicePanel.ui
 
 
-LIBS += -lz
+LIBS += -lz -ltiff

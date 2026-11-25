@@ -59,6 +59,13 @@ private:
   QLabel* mZoomLabel = nullptr;
   QDialog* mFullscreen = nullptr;
   QLabel* mFullscreenLabel = nullptr;
+  QVector<QString> mCapturedTiffPaths = QVector<QString>(8);
+  QImage mCapturedImage; // Cache only the selected PCH's full-resolution display pixels.
+  QString mCapturedImagePath;
+  int mCapturedImageSlot = -1;
+  quint64 mCaptureLoadGeneration = 0;
+  const QImage& displayedImage() const;
+  void showLastCapture();
   QVector<QImage> mPreviewFrames = QVector<QImage>(8);
   QVector<QRectF> mZoomRegions = QVector<QRectF>(8,QRectF(0,0,1,1));
   bool mPreviewPanning = false;

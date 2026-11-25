@@ -18,6 +18,7 @@
 #include <QHBoxLayout>
 #include <QTabWidget>
 #include <QScrollArea>
+#include <QCheckBox>
 
 
 static QString exposureToFriendlyString(double ms)
@@ -228,7 +229,16 @@ DevicePanel::DevicePanel(QWidget* parent)
        ui->label_cameraState, ui->value_cameraState, ui->btn_cameraStatus})
     ui->gridEndpoints->removeWidget(widget);
   ui->gridEndpoints->addWidget(ui->label_host,0,0);
-  ui->gridEndpoints->addWidget(ui->edit_host,0,1,1,2);
+  auto hostRow = new QHBoxLayout;
+  auto editHost = new QCheckBox("Edit", this);
+  editHost->setObjectName("check_editHost");
+  editHost->setToolTip("Allow a temporary address override for this session. Restarting restores the PCH address.");
+  ui->edit_host->setEnabled(false);
+  ui->edit_host->setToolTip("PCH1–PCH8 use 192.168.50.2–192.168.50.9. Check Edit for a temporary override.");
+  hostRow->addWidget(ui->edit_host, 1);
+  hostRow->addWidget(editHost);
+  ui->gridEndpoints->addLayout(hostRow,0,1,1,2);
+  connect(editHost, &QCheckBox::toggled, ui->edit_host, &QWidget::setEnabled);
   ui->gridEndpoints->addWidget(ui->label_lensPort,1,0);
   ui->gridEndpoints->addWidget(ui->spin_lensPort,1,1,1,2);
   ui->gridEndpoints->addWidget(ui->btn_lensConnect,2,1);
@@ -367,7 +377,10 @@ void DevicePanel::setSlotIndex(int idx1_based)
   QSettings settings("HyperK", "SigmaControl");
   settings.beginGroup(QString("pch%1").arg(mSlotIndex1));
   const QSignalBlocker hostBlock(ui->edit_host), lensBlock(ui->spin_lensPort), cameraBlock(ui->spin_cameraPort);
-  ui->edit_host->setText(settings.value("host", QString("192.168.50.%1").arg(mSlotIndex1+1)).toString());
+  // Addresses identify the physical PCH; overrides must never survive startup.
+  ui->edit_host->setText(QString("192.168.50.%1").arg(mSlotIndex1+1));
+  findChild<QCheckBox*>("check_editHost")->setChecked(false);
+  settings.remove("host");
   ui->spin_lensPort->setValue(settings.value("lensPort",5000).toInt());
   ui->spin_cameraPort->setValue(settings.value("cameraPort",5001).toInt());
 }
@@ -376,7 +389,7 @@ void DevicePanel::saveEndpointSettings()
 {
   QSettings settings("HyperK", "SigmaControl");
   settings.beginGroup(QString("pch%1").arg(mSlotIndex1));
-  settings.setValue("host", ui->edit_host->text().trimmed());
+  settings.remove("host"); // Address overrides are session-only.
   settings.setValue("lensPort", ui->spin_lensPort->value());
   settings.setValue("cameraPort", ui->spin_cameraPort->value());
 }

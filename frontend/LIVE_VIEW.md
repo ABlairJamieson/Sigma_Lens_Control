@@ -152,9 +152,10 @@ that hardware power-sequencing fix.
 ## PCH connections and lens recovery
 
 The eight device pages are PCH1–PCH8, with defaults 192.168.50.2–192.168.50.9
-respectively (lens TCP 5000, camera/host TCP 5001). Host and port edits are saved
-separately under `pch1` … `pch8` in SigmaControl settings; the old single global
-host setting is no longer copied across every page.
+respectively (lens TCP 5000, camera/host TCP 5001). Addresses start disabled; check
+**Edit** beside the address to allow a temporary override. Every startup restores
+the assigned PCH address and clears Edit, ignoring old saved address overrides.
+Port edits remain saved separately under `pch1` … `pch8` in SigmaControl settings.
 
 Each PCH has three pages: **Camera + Lens**, **Power + Connection**, and
 **Environment**. In Power + Connection, click **Connect host**, enable camera
@@ -224,3 +225,18 @@ enabled by default. A 4096×3072 sensor crop was faster in the short benchmark b
 reduces field of view. JPEG resizing and display zoom do not reduce sensor-readout
 work. These changes improve recovery; they do not establish a fix for the remaining
 host/SDK/USB transport stalls. Comparison results are saved with this chat's outputs.
+
+## Inspecting full-resolution captures
+
+With Live view off, the viewer uses the selected PCH's last saved 16-bit TIFF,
+loaded in the background at its original spatial resolution. Wheel zoom,
+middle-drag pan, Fit, and Fullscreen operate on those full-resolution pixels.
+The display maps 16-bit values to 8-bit brightness, matching the PNG preview;
+the TIFF's original pixel values remain unchanged. The reduced PNG is only a
+fallback while loading or if the TIFF is unavailable. Stopping live view restores
+the last capture. Only the active PCH's decoded TIFF is cached to limit memory;
+last-capture paths are saved per PCH and restored on startup if the TIFF still exists.
+
+Building the frontend and its tests now also requires libtiff development files
+(`libtiff-dev` on Debian/Ubuntu); the viewer uses libtiff directly and does not
+require Qt's optional TIFF image plugin.

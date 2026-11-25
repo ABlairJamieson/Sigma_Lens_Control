@@ -1,3 +1,4 @@
+#include <QCheckBox>
 #include <QtTest>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -126,19 +127,33 @@ private slots:
     QVERIFY(label->text().contains("cleared"));
     cam2->disconnect();
   }
-  void perPchDefaultsAndPersistence() {
-    QSettings("HyperK","SigmaControl").clear();
+  void perPchDefaultsAndTemporaryOverrides() {
+    QSettings settings("HyperK","SigmaControl");
+    settings.clear();
+    settings.setValue("pch1/host", "192.168.50.6"); // Ignore old saved overrides.
     for (int i=1;i<=8;++i) {
       DevicePanel panel; panel.setSlotIndex(i);
       QCOMPARE(panel.findChild<QLineEdit*>("edit_host")->text(),QString("192.168.50.%1").arg(i+1));
       QCOMPARE(panel.findChild<QSpinBox*>("spin_cameraPort")->value(),5001);
+      QVERIFY(!panel.findChild<QLineEdit*>("edit_host")->isEnabled());
+      QVERIFY(!panel.findChild<QCheckBox*>("check_editHost")->isChecked());
     }
     DevicePanel edited; edited.setSlotIndex(5);
-    edited.findChild<QLineEdit*>("edit_host")->setText("192.168.50.106");
+    auto host = edited.findChild<QLineEdit*>("edit_host");
+    auto unlock = edited.findChild<QCheckBox*>("check_editHost");
+    unlock->setChecked(true);
+    QVERIFY(host->isEnabled());
+    host->setText("192.168.50.106");
+    unlock->setChecked(false);
+    QVERIFY(!host->isEnabled());
+    QCOMPARE(host->text(),QString("192.168.50.106")); // Keep the session override.
     edited.findChild<QSpinBox*>("spin_lensPort")->setValue(5100);
     edited.saveEndpointSettings();
     DevicePanel restored; restored.setSlotIndex(5);
-    QCOMPARE(restored.findChild<QLineEdit*>("edit_host")->text(),QString("192.168.50.106"));
+    QCOMPARE(restored.findChild<QLineEdit*>("edit_host")->text(),QString("192.168.50.6"));
+    QVERIFY(!restored.findChild<QLineEdit*>("edit_host")->isEnabled());
+    QVERIFY(!settings.contains("pch1/host"));
+    QVERIFY(!settings.contains("pch5/host"));
     QCOMPARE(restored.findChild<QSpinBox*>("spin_lensPort")->value(),5100);
     restored.setSlotIndex(4);
     QCOMPARE(restored.findChild<QLineEdit*>("edit_host")->text(),QString("192.168.50.5"));

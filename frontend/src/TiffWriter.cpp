@@ -1,6 +1,10 @@
 #include "../include/TiffWriter.h"
 
 #include <QFile>
+#include <tiffio.h>
+#include <memory>
+#include <vector>
+#include <limits>
 #include <QByteArray>
 
 // Minimal TIFF writer for 16-bit grayscale, little-endian, uncompressed.
@@ -309,4 +313,35 @@ bool TiffWriter::writeGray16Tiff(const QString& path,
 
   f.close();
   return true;
+}
+
+QImage TiffWriter::readGray16Display(const QString& path, QString* errOut)
+{
+  auto fail = [errOut](const QString& reason) { if (errOut) *errOut=reason; return QImage(); };
+  std::unique_ptr<TIFF, decltype(&TIFFClose)> file(TIFFOpen(QFile::encodeName(path).constData(), "r"), TIFFClose);
+  if (!file) return fail("Cannot open TIFF");
+  uint32_t width=0,height=0;
+  uint16_t bits=0,samples=0,format=0,photo=0,orientation=0;
+  TIFFGetField(file.get(), TIFFTAG_IMAGEWIDTH, &width);
+  TIFFGetField(file.get(), TIFFTAG_IMAGELENGTH, &height);
+  TIFFGetFieldDefaulted(file.get(), TIFFTAG_BITSPERSAMPLE, &bits);
+  TIFFGetFieldDefaulted(file.get(), TIFFTAG_SAMPLESPERPIXEL, &samples);
+  TIFFGetFieldDefaulted(file.get(), TIFFTAG_SAMPLEFORMAT, &format);
+  TIFFGetFieldDefaulted(file.get(), TIFFTAG_PHOTOMETRIC, &photo);
+  TIFFGetFieldDefaulted(file.get(), TIFFTAG_ORIENTATION, &orientation);
+  if (!width || !height || uint64_t(width)*height>250000000 ||
+      bits!=16 || samples!=1 || format!=SAMPLEFORMAT_UINT || photo!=PHOTOMETRIC_MINISBLACK ||
+      orientation!=ORIENTATION_TOPLEFT || TIFFIsTiled(file.get()))
+    return fail("Unsupported TIFF: expected a 16-bit grayscale camera capture");
+  QImage image(int(width),int(height),QImage::Format_Grayscale8);
+  if (image.isNull()) return fail("Cannot allocate captured image");
+  const auto bytes=TIFFScanlineSize(file.get());
+  if (bytes<qint64(width)*2 || bytes>std::numeric_limits<int>::max()) return fail("Invalid TIFF row size");
+  std::vector<uint16_t> row((size_t(bytes)+1)/2);
+  for (uint32_t y=0;y<height;++y) {
+    if (TIFFReadScanline(file.get(),row.data(),y,0)<0) return fail("Cannot read TIFF pixels");
+    auto out=image.scanLine(int(y));
+    for (uint32_t x=0;x<width;++x) out[x]=uchar(row[x]>>8);
+  }
+  return image;
 }
