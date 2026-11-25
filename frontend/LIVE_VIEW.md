@@ -10,7 +10,7 @@ lens/scene; automated tests use simulated cameras/lenses.
 Live view normally follows the selected slot's capture exposure and gain, including
 changes made while it is running. Uncheck **Use capture exposure/gain** to set a
 separate live exposure/gain without changing still-capture settings. Live exposure
-is limited to 1–2000 ms; longer capture exposures are left unchanged and the live
+is limited to 0.001–2000 ms; longer capture exposures are left unchanged and the live
 status identifies the 2 s limit. SDK-confirmed live exposure/gain appear in status.
 A frame already exposing or queued in the SDK may still use the previous settings.
 
@@ -24,10 +24,9 @@ size; these help separate camera/host work from network/display costs.
 
 Full view uses the largest advertised binning that does not exceed the requested
 scale, then reduces the image for display. Fullscreen can request a larger image
-and therefore more processing/transfer. Autofocus temporarily reads an unbinned
-sensor ROI, up to 1024×768 pixels, at the selected location. This reduces transferred
-sensor pixels and retains fine detail for scoring. Manual wheel zoom is independent
-of that autofocus crop and enlarges the received preview for display.
+and therefore more processing/transfer. Focus detail and autofocus read the
+selected unbinned sensor ROI, up to 1024×768 pixels. The smaller region reduces
+transfer size and retains fine detail for scoring.
 
 USB 3 only speeds the camera-to-host part of the path. Sensor readout/exposure,
 SDK buffering, image conversion/JPEG, the network and GUI display also contribute.
@@ -67,7 +66,7 @@ clipped to the existing supported lens range 8232–12777). Increase it if neces
 a narrow local search cannot guarantee a global focus solution.
 
 The GUI first verifies a fresh focus-capable frame from the host bridge before
-sending any focus movement. It then temporarily selects focus detail and freezes
+sending any focus movement. It selects focus detail and freezes
 exposure/gain/aperture/manual lens controls. The search:
 
 - measures nine coarse positions, then up to nine fine positions around the best;
@@ -77,7 +76,10 @@ exposure/gain/aperture/manual lens controls. The search:
 - waits another 350 ms, changes a unique frame token and restarts the small ROI
   video stream, discarding two startup frames before scoring;
 - takes the median of three scores at each position, and returns to the best
-  measured position with a final telemetry check.
+  measured position with a final telemetry check;
+- scores three fresh frames after returning and verifies that their median is at
+  least 90% of the winning search score. A lower score flags the result for manual
+  inspection at the chosen position.
 
 The score is mean squared Sobel gradient magnitude (Tenengrad) after a light 3×3
 Gaussian blur, measured in the central 80% of the selected ROI before
@@ -175,8 +177,7 @@ this does not restart sigma-carrier or change camera 12 V.
 
 Autofocus completion now explicitly reports the lens-confirmed final raw position.
 Cancel returns to the starting focus, rather than applying the best partial-search
-sample. Progress, each median sharpness score, commanded positions and the return
-phase are written to the normal session log. A return timeout reports uncertainty
+sample. The session log records the scores and lens, settling, and frame timings. A return timeout reports uncertainty
 and the last reported position, without claiming the original focus was restored.
 An autofocus result remains visible if subsequent live frames time out.
 
@@ -191,10 +192,10 @@ settings, camera acquisition, the autofocus score, or the sensor-pixel focus ROI
 Clicking moves the fixed 1024×768 sensor-pixel ROI through the displayed zoomed
 coordinates; its outline scales with zoom. Right-click still centres the ROI.
 
-The manual focus-crop checkbox is replaced by wheel zoom. Autofocus still requests
-an unbinned camera crop internally, temporarily shows that crop while running,
-and restores the display zoom afterward. Zoom and focus selection are locked
-while autofocus is active.
+Select **Focus detail (1:1)** to display the unbinned crop at native pixel scale.
+Use fullscreen if the preview pane clips the crop. Autofocus leaves detail mode
+on so you can inspect the result. Uncheck it to return to the full-field preview.
+Zoom and focus selection are locked while autofocus is active.
 
 **Use capture exposure/gain** is checked on startup. Duplicate live exposure/gain
 inputs are hidden while linked and appear only when that option is unchecked.

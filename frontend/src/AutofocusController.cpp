@@ -7,11 +7,15 @@ AutofocusController::AutofocusController(QObject* parent) : QObject(parent) {
   connect(&mDeadline,&QTimer::timeout,this,[this] {
     if (mState == Returning || mState == ReturningBackoff) {
       mReturnSuccess=false; mReturnMessage += "; lens position could not be verified"; complete();
+    } else if (mVerifying) {
+      mReturnSuccess=false; mReturnMessage += "; final sharpness could not be verified (frame timeout)"; complete();
     } else cancel("Autofocus timed out waiting for lens/frame");
   });
   connect(&mTotal,&QTimer::timeout,this,[this] { cancel("Autofocus exceeded three minutes"); });
   connect(&mSettle,&QTimer::timeout,this,[this] {
     if (mState != Settling) return;
+    mSettleMs=mPhaseTime.restart();
+    mAcquisitionMs=0;
     mState=Sampling; mSamples.clear();
     mToken=QString::number(++mGeneration);
     mDeadline.start(20000);
@@ -34,7 +38,7 @@ void AutofocusController::start(int current,int radius) {
   mOriginal=std::clamp(current,8232,12777); mLastPosition=mOriginal;
   mLow=std::max(8232,mOriginal-std::clamp(radius,16,4545));
   mHigh=std::min(12777,mOriginal+std::clamp(radius,16,4545));
-  mStage=0; mBest=mOriginal; mBestScore=-1; mWorstScore=1e300;
+  mVerifying=false; mStage=0; mBest=mOriginal; mBestScore=-1; mWorstScore=1e300;
   grid(mLow,mHigh); mTotal.start(180000); nextPosition();
 }
 void AutofocusController::nextPosition() {
@@ -57,19 +61,28 @@ void AutofocusController::nextPosition() {
   mAckTarget=std::max(8232,mTarget-32); mState=Backoff; mDeadline.start(10000);
   emit progress(QString("Autofocus %1: %2/%3, raw %4").arg(mStage ? "fine" : "coarse")
                 .arg(mIndex+1).arg(mPositions.size()).arg(mTarget));
+  mPhaseTime.start();
   emit moveRequested(mAckTarget);
 }
 void AutofocusController::positionReceived(int position) {
   if (!active()) return;
   mLastPosition=position;
   if (position!=mAckTarget) return;
-  if (mState==Returning) { mPositionConfirmed=true; complete(); return; }
+  if (mState==Returning) {
+    mPositionConfirmed=true;
+    if (!mReturnSuccess) { complete(); return; }
+    mVerifying=true;
+    mMoveMs=mPhaseTime.restart();
+    mState=Settling; mDeadline.start(20000); mSettle.start(350);
+    return;
+  }
   if (mState==ReturningBackoff) {
     mState=Returning; mAckTarget=mTarget; mDeadline.start(10000); emit moveRequested(mTarget); return;
   }
   if (mState==Backoff) {
     mState=Moving; mAckTarget=mTarget; mDeadline.start(10000); emit moveRequested(mTarget);
   } else if (mState==Moving) {
+    mMoveMs=mPhaseTime.restart();
     mState=Settling; mDeadline.start(20000); mSettle.start(350);
   }
 }
@@ -79,12 +92,32 @@ void AutofocusController::frameReceived(const QJsonObject& frame) {
   const double level=frame.value("mean_level").toDouble(-1);
   if (frame.value("view_mode").toString()!="focus" || !std::isfinite(score) || score<0 ||
       level<5 || level>245 || frame.value("saturated_fraction").toDouble(1)>.05) {
-    cancel("Focus image is dark, saturated or unsupported; adjust exposure and retry"); return;
+    if (mVerifying) {
+      mReturnSuccess=false;
+      mReturnMessage += "; final sharpness could not be verified (invalid focus frame)";
+      complete();
+    } else cancel("Focus image is dark, saturated or unsupported; adjust exposure and retry");
+    return;
   }
+  if (mSamples.isEmpty()) mFirstFrameMs=mPhaseTime.elapsed();
+  mAcquisitionMs+=frame.value("acquisition_ms").toDouble();
   mSamples.append(score);
   if (mSamples.size()<3) return;
   std::sort(mSamples.begin(),mSamples.end());
   const double median=mSamples[1];
+  emit progress(QString("Autofocus timing raw %1: lens %2 ms, settle %3 ms, fresh stream to first frame %4 ms, "
+                        "three frames %5 ms (bridge acquisition %6 ms)")
+    .arg(mTarget).arg(mMoveMs).arg(mSettleMs).arg(mFirstFrameMs).arg(mPhaseTime.elapsed()).arg(mAcquisitionMs,0,'f',1));
+  if (mVerifying) {
+    constexpr double minimumScoreRatio=0.90;
+    mReturnSuccess=median>=minimumScoreRatio*mBestScore;
+    mReturnMessage=QString("Autofocus %1: raw %2, final sharpness %3 vs search %4%5")
+      .arg(mReturnSuccess ? "verified" : "sharpness not verified").arg(mTarget)
+      .arg(median,0,'f',1).arg(mBestScore,0,'f',1)
+      .arg(mTarget==mLow || mTarget==mHigh ? " (range edge — widen search or check manually)" : "");
+    complete();
+    return;
+  }
   if (median>mBestScore) { mBestScore=median; mBest=mTarget; }
   mWorstScore=std::min(mWorstScore,median);
   emit progress(QString("Autofocus %1 sample: raw %2, sharpness %3; best raw %4, sharpness %5")
@@ -93,11 +126,11 @@ void AutofocusController::frameReceived(const QJsonObject& frame) {
 }
 void AutofocusController::returnTo(int position,bool success,const QString& message) {
   mSettle.stop(); mTotal.stop(); mReturnMessage=message; mReturnSuccess=success;
-  mPositionConfirmed=false;
+  mPositionConfirmed=false; mVerifying=false;
   emit progress(QString("%1: returning to %2 raw %3; waiting for lens confirmation")
     .arg(success ? "Autofocus search finished" : message).arg(success ? "best focus" : "original focus").arg(position));
   mTarget=position; mAckTarget=std::max(8232,position-32);
-  mState=ReturningBackoff; mDeadline.start(10000);
+  mState=ReturningBackoff; mDeadline.start(10000); mPhaseTime.start();
   emit moveRequested(mAckTarget);
 }
 void AutofocusController::cancel(const QString& reason) {
@@ -108,7 +141,7 @@ void AutofocusController::cancel(const QString& reason) {
 void AutofocusController::complete() {
   mDeadline.stop(); mSettle.stop(); mTotal.stop(); mState=Idle;
   if (mPositionConfirmed) {
-    mReturnMessage += mReturnSuccess ? QString("; lens confirmed raw %1").arg(mTarget)
+    mReturnMessage += (mReturnSuccess || mVerifying) ? QString("; lens confirmed raw %1").arg(mTarget)
       : QString("; original focus restored at raw %1 (lens confirmed)").arg(mTarget);
   }
   emit finished(mReturnSuccess,mPositionConfirmed ? mTarget : mLastPosition,mReturnMessage);

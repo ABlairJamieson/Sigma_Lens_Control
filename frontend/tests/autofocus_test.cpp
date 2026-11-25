@@ -5,16 +5,25 @@
 class AutofocusTest : public QObject {
   Q_OBJECT
 private slots:
+  void findsPeakWithFreshFramesAndAcknowledgedMoves_data() {
+    QTest::addColumn<double>("returnScoreScale");
+    QTest::newRow("verified") << 1.0;
+    QTest::newRow("degraded") << 0.7;
+  }
   void findsPeakWithFreshFramesAndAcknowledgedMoves() {
+    QFETCH(double,returnScoreScale);
     AutofocusController af;
-    int position=0; QVector<int> moves;
+    int position=0; QVector<int> moves; bool verifying=false;
+    connect(&af,&AutofocusController::progress,&af,[&](const QString& message) {
+      if (message.startsWith("Autofocus search finished")) verifying=true;
+    });
     connect(&af,&AutofocusController::moveRequested,&af,[&](int p) {
       position=p; moves.append(p);
       QTimer::singleShot(0,&af,[&,p] { af.positionReceived(p); });
     });
     connect(&af,&AutofocusController::freshFrameRequested,&af,[&](const QString& token) {
       const double score=1000.0-(position-9020)*(position-9020)*.1;
-      QJsonObject sample{{"focus_token",token},{"view_mode","focus"},{"focus_score",std::max(10.0,score)},
+      QJsonObject sample{{"focus_token",token},{"view_mode","focus"},{"focus_score",std::max(10.0,score)*(verifying ? returnScoreScale : 1.0)},
                          {"mean_level",100},{"saturated_fraction",0.0}};
       auto stale=sample; stale["focus_token"]="stale";
       af.frameReceived(stale); // must not influence the search
@@ -23,7 +32,10 @@ private slots:
     QSignalSpy done(&af,&AutofocusController::finished);
     af.start(9000,64);
     QTRY_COMPARE_WITH_TIMEOUT(done.count(),1,15000);
-    QVERIFY(done[0][0].toBool()); QCOMPARE(done[0][1].toInt(),9020);
+    QCOMPARE(done[0][0].toBool(),returnScoreScale==1.0);
+    QCOMPARE(done[0][1].toInt(),9020);
+    QVERIFY(verifying);
+    QVERIFY(done[0][2].toString().contains("final sharpness"));
     QVERIFY(!af.active());
     QVERIFY(done[0][2].toString().contains("lens confirmed raw 9020"));
     QCOMPARE(moves[moves.size()-2],8988); QCOMPARE(moves.last(),9020);

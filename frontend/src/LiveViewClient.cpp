@@ -39,7 +39,8 @@ void LiveViewClient::setTargetSize(const QSize& size) {
 }
 void LiveViewClient::requestFrame() {
   if (!mActive || mWaiting || mSocket.state() != QAbstractSocket::ConnectedState) return;
-  const QJsonObject request{{"cmd", "live_frame"}, {"max_width", mSize.width()}, {"max_height", mSize.height()},
+  const QSize size = mFocusView ? QSize(1024,768) : mSize;
+  const QJsonObject request{{"cmd", "live_frame"}, {"max_width", size.width()}, {"max_height", size.height()},
                             {"jpeg_quality", 80}, {"exposure_us", mExposure}, {"gain", mGain}, {"view_mode", mFocusView ? "focus" : "full"}, {"focus_token", mFocusToken}, {"focus_x", mFocusCenter.x()}, {"focus_y", mFocusCenter.y()}};
   mSocket.write(QJsonDocument(request).toJson(QJsonDocument::Compact)+"\n");
   mWaiting = true; mRequestTime.restart(); mDeadline.start(30000);

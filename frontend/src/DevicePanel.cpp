@@ -132,7 +132,7 @@ DevicePanel::DevicePanel(QWidget* parent)
   connect(mCarrier, &CameraClient::diagnosticsReceived, this, [this](const QJsonObject& d) {
     mCarrierLive = d.value("live_active").toBool(false); updateCarrierControls();
   });
-  connect(ui->spin_exposureMs, qOverload<int>(&QSpinBox::valueChanged), this, [this] { emit cameraSettingsChanged(); });
+  connect(ui->spin_exposureMs, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this] { emit cameraSettingsChanged(); });
   connect(ui->spin_gain, qOverload<int>(&QSpinBox::valueChanged), this, [this] { emit cameraSettingsChanged(); });
   updateCarrierControls();
   auto diagnosticsBox = new QGroupBox("ASI camera diagnostics", this);
@@ -318,7 +318,7 @@ DevicePanel::DevicePanel(QWidget* parent)
 
   connect(ui->btn_applyTelemetryInterval, &QPushButton::clicked, this, &DevicePanel::onApplyTelemetryInterval);
 
-  connect(ui->spin_exposureMs, qOverload<int>(&QSpinBox::valueChanged),
+  connect(ui->spin_exposureMs, qOverload<double>(&QDoubleSpinBox::valueChanged),
         this, [this](int) {
           ui->value_exposureFriendly->setText(
               exposureToFriendlyString(ui->spin_exposureMs->value()));
