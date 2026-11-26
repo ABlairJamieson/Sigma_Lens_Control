@@ -39,7 +39,30 @@ RADXA CM5 CUSTOM CARRIER - NOT BEAGLEY (tech: verify flash notes)
    Disconnects SSH; removes university gateway/DNS. Use new IP afterward.
    Return to university: sudo bash cm5_setup/network.sh university
 
-CONFIRMED CAMERA SETTINGS (applied by install.py)
+BASE-ONLY CM5 / IWCD WITH NON-ASI CAMERAS
+Complete steps 1-4 above (time, university network, photogrammetry, clone).
+Skip the ASI transfer and extraction in steps 5-6. Instead run:
+    cd ~/Sigma_Lens_Control
+    sudo python3 cm5_setup/install.py --base-only
+    sudo reboot
+This installs base tools, Python venv, SSH, approximate clock persistence,
+and the ES8316 audio-disable overlay. Account and clone location are still
+required. Network settings, hostname and passwords are not changed.
+No ASI SDK/zwoasi, camera buffer/udev settings or bridge units are installed.
+Teensy firmware preparation and carrier-control service setup are skipped too.
+Do not combine --base-only with --sdk, --camera-id or --carrier-v1-1.
+Existing camera settings and bridge services are not removed or disabled.
+Sony camera drivers/application setup is separate and interface-specific.
+After reboot check (do not use the ASI-specific camera check for base-only):
+    cat /proc/device-tree/es8316-sound/status; echo
+    systemctl is-active ssh
+    date -u
+    ip -br -4 address
+Expected: audio status disabled, SSH active, correct UTC and setup IP.
+Do not apply the PCH naming/IP step to IWCD unless that is its assigned role.
+To add ASI support later, rerun with --sdk as in step 6; omit --base-only.
+
+CONFIRMED CAMERA SETTINGS (applied by full install.py --sdk setup)
 - Kernel arguments: swiotlb=131072 usbcore.usbfs_memory_mb=200
   These are DIFFERENT USB memory limits. Default USBFS 16 MB prevented capture.
 - Explicit ASI permissions for photogrammetry and camera autosuspend disabled.
@@ -84,7 +107,7 @@ No Teensy firmware/protocol change or extra TCP port is required.
 See cm5_setup/CARRIER_CONTROL.md for wiring, protocol, deployment and tests.
 
 TEENSY RELEASE UPDATES (CM5 OR BEAGLEY)
-The host installer now requires --camera-id ID and stages the published firmware
+Full --sdk setup requires --camera-id ID and stages the published firmware
 release from tools/firmware-release.json on origin/main. ID is the Teensy camera
 ID, not the pch hostname/IP number. Nothing is flashed by host provisioning.
 One-time tools setup, as the normal user on the CM5/BeagleY:

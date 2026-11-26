@@ -2,7 +2,8 @@
 """Provision stock Debian ARM64 Radxa CM5 on the custom carrier.
 
 Run with sudo from /home/photogrammetry/Sigma_Lens_Control.
-Does not change network settings or delete accounts. Services stay disabled.
+Does not change network settings or delete accounts. Full setup leaves bridge
+services disabled. --base-only skips ASI and leaves existing bridges untouched.
 """
 import argparse
 import os
@@ -73,23 +74,57 @@ def configure_overlay():
             'Generated boot entry lacks the overlay. Inspect config before rebooting.')
 
 
+def finish_base_setup():
+    run('systemctl', 'enable', '--now', 'ssh.service')
+    run('systemctl', 'enable', 'fake-hwclock.service')
+    run('fake-hwclock', 'save')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--sdk', type=Path, required=True,
-                        help='Extracted ASI_linux_mac_SDK_V1.41 directory')
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--sdk', type=Path,
+                      help='Full setup: extracted ASI_linux_mac_SDK_V1.41 directory')
+    mode.add_argument('--base-only', action='store_true',
+                      help='Base CM5 setup and audio fix; no ASI or bridge setup')
     parser.add_argument('--carrier-v1-1', action='store_true',
-                        help='Install v1.1 camera power/INA226/TMP117 service (camera defaults OFF)')
-    parser.add_argument('--camera-id', type=int, required=True,
-                        help='Teensy camera ID, independent of hostname/IP; stages latest released firmware')
+                        help='Full setup: install v1.1 camera power/INA226/TMP117 service')
+    parser.add_argument('--camera-id', type=int,
+                        help='Required for --sdk: Teensy camera ID (0..255), independent of hostname/IP')
     args = parser.parse_args()
-    require(0 <= args.camera_id <= 255, 'camera-id must be in 0..255')
-    require(os.geteuid() == 0, 'Run using sudo python3 cm5_setup/install.py --sdk ...')
+    if args.base_only:
+        if args.camera_id is not None or args.carrier_v1_1:
+            parser.error('--base-only cannot be combined with --camera-id or --carrier-v1-1')
+    elif args.camera_id is None:
+        parser.error('--camera-id is required with --sdk')
+    elif not 0 <= args.camera_id <= 255:
+        parser.error('--camera-id must be in 0..255')
+    require(os.geteuid() == 0,
+            'Run using sudo python3 cm5_setup/install.py --base-only or --sdk ...')
     require(platform.machine() == 'aarch64', 'Requires 64-bit ARM Linux')
     require(b'radxa,cm5' in Path('/proc/device-tree/compatible').read_bytes(),
             'This installer is for Radxa CM5, not BeagleY')
     account = pwd.getpwnam('photogrammetry')
     require(ROOT == Path(account.pw_dir) / 'Sigma_Lens_Control',
             'Clone into /home/photogrammetry/Sigma_Lens_Control first')
+    if args.base_only:
+        run('apt-get', 'update')
+        run('apt-get', 'install', '-y', 'git', 'openssh-server', 'ca-certificates',
+            'python3-venv', 'python3-pip', 'device-tree-compiler',
+            'fake-hwclock', 'usbutils')
+        run('usermod', '-aG', 'dialout', 'photogrammetry')
+        run('runuser', '-u', 'photogrammetry', '--', 'python3', '-m', 'venv',
+            '--system-site-packages', ROOT / '.venv')
+        configure_overlay()
+        finish_base_setup()
+        print('CM5 base setup complete. REBOOT to apply the audio overlay. Network unchanged.')
+        print('ASI SDK, camera settings and bridge service setup skipped.')
+        print('Existing camera settings and bridge services were not changed or removed.')
+        print('Sony camera support must be installed separately for the actual camera interface.')
+        print('After reboot: cat /proc/device-tree/es8316-sound/status; echo')
+        print('Check: systemctl is-active ssh; date -u; ip -br -4 address')
+        print('Clock persistence is approximate; correct time needs NTP or manual setting.')
+        return
     sdk = args.sdk.expanduser().resolve()
     libraries = [sdk / 'lib' / arch / 'libASICamera2.so'
                  for arch in ('armv8', 'arm8', 'aarch64', 'arm64')]
@@ -147,9 +182,7 @@ def main():
         run(sys.executable, ROOT / 'cm5_setup/install_carrier_control.py')
     run('systemctl', 'daemon-reload')
     run('systemctl', 'disable', '--now', 'teensy-bridge.service', 'asi-bridge.service')
-    run('systemctl', 'enable', '--now', 'ssh.service')
-    run('systemctl', 'enable', 'fake-hwclock.service')
-    run('fake-hwclock', 'save')
+    finish_base_setup()
     print('Latest published Teensy source staged; build/upload separately with tools/update_teensy.py.')
     print('CM5 setup complete. REBOOT to apply audio overlay and camera buffer settings. Network unchanged.')
     print('After reboot: sudo python3 cm5_setup/camera_setup.py --check')
